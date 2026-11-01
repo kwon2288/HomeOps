@@ -36,7 +36,10 @@ class PortainerIntegration(Integration):
             actions = ([act("restart", "재시작", params=prm, confirm=f"{c['name']} 컨테이너를 재시작합니다."),
                         act("stop", "중지", danger=True, params=prm, confirm=f"{c['name']} 컨테이너를 중지합니다.")]
                        if on else [act("start", "시작", params=prm)])
+            problem = c["state"] == "restarting" or "unhealthy" in str(c["status"] or "")
+            badge = ("재시작 반복" if c["state"] == "restarting" else "unhealthy") if problem else (None if on else "중지")
             rows.append(row(c["name"], f"{c['image']} · {c['status']}" + (f" · 스택 {c['stack']}" if c.get("stack") else ""),
+                            badge=badge, tone="warn" if problem else "",
                             actions=actions + [act("logs", "로그", params=prm)]))
         stacks = [row(s["name"], f"엔드포인트 {s['endpoint']}", badge="실행 중" if s["active"] else "중지",
                       tone="ok" if s["active"] else "",
@@ -48,7 +51,7 @@ class PortainerIntegration(Integration):
             summary=f"Portainer {p['version']}",
             metrics=[metric("실행 중", p["running"]), metric("중지됨", p["stopped"]),
                      metric("스택", len(p["stacks"])), metric("전체 컨테이너", len(p["containers"]))],
-            sections=[section("컨테이너 (중지된 것 먼저)", rows, empty="컨테이너가 없습니다")]
+            sections=[section("컨테이너 (문제 · 실행 중 · 중지 순)", rows, empty="컨테이너가 없습니다")]
             + ([section("스택", stacks)] if stacks else []),
         )
 

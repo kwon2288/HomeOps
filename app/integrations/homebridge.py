@@ -27,11 +27,12 @@ class Homebridge(Integration):
 
     async def status(self) -> dict:
         st = await self._client().status()
+        state = "실행 중" if st["running"] else {"pending": "시작 중", "down": "정지"}.get(st["state"], st["state"] or "알 수 없음")
         return card(
-            summary=f"Homebridge {st['version'] or '?'} · {'실행 중' if st['running'] else '정지'}",
+            summary=f"Homebridge {st['version'] or '?'} · {state}",
             metrics=[metric("버전", st["version"]), metric("플러그인", st["plugin_count"]),
                      metric("액세서리", st["accessory_count"] if st["insecure_mode"] else "insecure 모드 필요"),
-                     metric("상태", "실행 중" if st["running"] else "정지")],
+                     metric("상태", state)],
             actions=[act("restart", "재시작", danger=True,
                          confirm="재시작하는 동안 HomeKit에서 Homebridge 기기가 응답 없음으로 보입니다.")],
         )

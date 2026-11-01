@@ -71,7 +71,13 @@ class Portainer:
                 } for s in sr.json()]
             except httpx.HTTPError:
                 stacks = []
-        containers.sort(key=lambda x: (x["state"] == "running", x["name"]))
+        # 진짜 문제(unhealthy · 재시작 반복)만 맨 위, 그다음 실행 중, 일부러 꺼 둔 중지 컨테이너는 맨 아래
+        def rank(x: dict[str, Any]) -> int:
+            if x["state"] == "restarting" or "unhealthy" in str(x["status"] or ""):
+                return 0
+            return {"running": 1, "paused": 2, "created": 2}.get(x["state"] or "", 3)
+        containers.sort(key=lambda x: (rank(x), (x["name"] or "").lower()))
+        stacks.sort(key=lambda x: (not x["active"], (x["name"] or "").lower()))
         return {
             "online": True,
             "version": version,

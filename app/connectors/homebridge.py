@@ -48,7 +48,9 @@ class Homebridge:
             st = await self._get(c, "/api/status/homebridge")
             out: dict[str, Any] = {
                 "online": True,
-                "running": st.get("status") == "up",
+                # UI 버전에 따라 실행 중을 "up" 또는 "ok"로 알려 준다 ("pending" = 시작 중)
+                "state": str(st.get("status") or "").lower(),
+                "running": str(st.get("status") or "").lower() in ("up", "ok"),
                 "version": None, "plugin_count": None, "accessory_count": None,
                 "insecure_mode": False,
             }

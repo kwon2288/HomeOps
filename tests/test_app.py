@@ -320,3 +320,46 @@ def test_slow_device_list_names_request_and_keeps_last(runtime):
     # 연결 테스트 · 상태 카드는 가벼운 /devices 만 쓰므로 영향 없음
     r = c.post("/api/connections/test", json={"id": "main", "config": {"url": "http://hub.test", "app_id": 7}}).json()
     assert r["ok"] and "기기 1개" in r["message"]
+
+
+@respx.mock
+def test_homebridge_running_states(runtime):
+    """UI 버전에 따라 실행 중이 "up" 또는 "ok". "pending" 은 시작 중."""
+    hb = "http://hb.test"
+    respx.post(f"{hb}/api/auth/login").mock(return_value=httpx.Response(200, json={"access_token": "t", "expires_in": 3600}))
+    st_route = respx.get(f"{hb}/api/status/homebridge").mock(return_value=httpx.Response(200, json={"status": "ok"}))
+    respx.get(f"{hb}/api/status/homebridge-version").mock(return_value=httpx.Response(200, json={"installedVersion": "2.4.0"}))
+    respx.get(f"{hb}/api/plugins").mock(return_value=httpx.Response(200, json=[]))
+    respx.get(f"{hb}/api/accessories").mock(return_value=httpx.Response(200, json=[]))
+    c = make_client(Settings(connections=[conn("homebridge", "hb", url=hb, username="u", password="p")]), runtime)
+
+    def state():
+        card = c.get("/api/status/hb").json()["card"]
+        return next(m["value"] for m in card["metrics"] if m["label"] == "상태")
+    assert state() == "실행 중"
+    for raw, shown in (("up", "실행 중"), ("pending", "시작 중"), ("down", "정지")):
+        st_route.mock(return_value=httpx.Response(200, json={"status": raw}))
+        assert state() == shown
+
+
+@respx.mock
+def test_portainer_order_problems_running_then_stopped(runtime):
+    api = "https://ptn.test/api"
+    respx.get(f"{api}/status").mock(return_value=httpx.Response(200, json={"Version": "2.45.3"}))
+    respx.get(f"{api}/endpoints").mock(return_value=httpx.Response(200, json=[{"Id": 2, "Name": "local"}]))
+    cts = [
+        {"Id": "1", "Names": ["/cloudflared"], "Image": "c", "State": "exited", "Status": "Exited (137) 3 months ago"},
+        {"Id": "2", "Names": ["/bitwarden"], "Image": "b", "State": "running", "Status": "Up 4 days (healthy)"},
+        {"Id": "3", "Names": ["/zigbee"], "Image": "z", "State": "running", "Status": "Up 1 hour (unhealthy)"},
+        {"Id": "4", "Names": ["/Alpha"], "Image": "a", "State": "running", "Status": "Up 2 days"},
+        {"Id": "5", "Names": ["/loop"], "Image": "l", "State": "restarting", "Status": "Restarting (1) 5 seconds ago"},
+    ]
+    respx.get(f"{api}/endpoints/2/docker/containers/json").mock(return_value=httpx.Response(200, json=cts))
+    respx.get(f"{api}/stacks").mock(return_value=httpx.Response(200, json=[
+        {"Id": 1, "Name": "old", "EndpointId": 2, "Status": 2}, {"Id": 2, "Name": "npm", "EndpointId": 2, "Status": 1}]))
+    c = make_client(Settings(connections=[conn("portainer", "ptn", url="https://ptn.test", api_key="k")]), runtime)
+    secs = c.get("/api/status/ptn").json()["card"]["sections"]
+    rows = secs[0]["rows"]
+    assert [r["name"] for r in rows] == ["loop", "zigbee", "Alpha", "bitwarden", "cloudflared"]
+    assert [r["badge"] for r in rows] == ["재시작 반복", "unhealthy", None, None, "중지"]
+    assert [r["name"] for r in secs[1]["rows"]] == ["npm", "old"]
