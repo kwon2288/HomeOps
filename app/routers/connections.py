@@ -91,10 +91,24 @@ def list_connections(request: Request) -> list[dict]:
     return out
 
 
+async def _before_save(request: Request, conn: ConnectionCfg) -> ConnectionCfg:
+    try:
+        conn.config = await asyncio.wait_for(instance(request, conn).before_save(), STATUS_TIMEOUT)
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(502, "응답 시간 초과") from exc
+    except ConnectorError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, describe(exc)) from exc
+    return conn
+
+
 @router.post("/connections")
-def create_connection(request: Request, body: dict = Body(...)) -> dict:
+async def create_connection(request: Request, body: dict = Body(...)) -> dict:
     c = ctx(request)
-    conn = _build(request, body, None)
+    conn = await _before_save(request, _build(request, body, None))
     conn.id = _new_id(conn.type, {x.id for x in c.settings.connections})
     _save(request, [*c.settings.connections, conn])
     c.db.audit("연결 추가", f"{conn.name} ({conn.type})", "성공")
@@ -102,12 +116,12 @@ def create_connection(request: Request, body: dict = Body(...)) -> dict:
 
 
 @router.put("/connections/{conn_id}")
-def update_connection(conn_id: str, request: Request, body: dict = Body(...)) -> dict:
+async def update_connection(conn_id: str, request: Request, body: dict = Body(...)) -> dict:
     c = ctx(request)
     old = c.settings.conn(conn_id)
     if not old:
         raise HTTPException(404, "연결이 없습니다")
-    conn = _build(request, body, old)
+    conn = await _before_save(request, _build(request, body, old))
     _save(request, [conn if x.id == conn_id else x for x in c.settings.connections])
     c.db.audit("연결 수정", f"{conn.name} ({conn.type})", "성공")
     return masked_conn(conn.model_dump())

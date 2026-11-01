@@ -465,7 +465,7 @@ function setResult(form, ok, msg) {
 /** 연동 선언의 입력 칸 → 폼 칸 */
 function formFields(meta) {
   return [{ name: "__name", label: "이름", ph: meta.title },
-    ...meta.fields.map((f) => ({ name: f.name, label: f.label, type: f.kind === "url" || f.kind === "text" ? "text" : f.kind,
+    ...meta.fields.filter((f) => f.kind !== "hidden").map((f) => ({ name: f.name, label: f.label, type: f.kind === "url" || f.kind === "text" ? "text" : f.kind,
       secret: f.secret, ph: f.ph, def: f.default, full: f.full, options: f.options }))];
 }
 

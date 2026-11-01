@@ -6,23 +6,60 @@ from ..connectors.synology import Synology as Client
 from .base import Integration, act, card, field, metric, row, section, uptime, url_field, verify_field
 
 
+_PENDING_DEVICE: dict[tuple[str, str], str] = {}
+
+
 class SynologyNas(Integration):
     type = "synology"
     title = "Synology NAS"
     category = "infra"
     desc = "볼륨 · 디스크 · 리소스 · 재부팅"
     order = 10
-    help = "2단계 인증을 끈 <b>HomeOps 전용 계정</b>을 만들어 쓰세요. 재부팅·스토리지 조회에는 관리자 그룹 권한이 필요합니다."
+    help = ("<b>HomeOps 전용 계정</b>을 권합니다. 재부팅·스토리지 조회에는 관리자 그룹 권한이 필요합니다. "
+            "2단계 인증을 켠 계정이면 인증 앱의 6자리 코드를 넣고 저장하세요. HomeOps가 DSM의 "
+            "<b>신뢰할 수 있는 기기</b>로 등록되어 이후에는 코드 없이 로그인합니다 "
+            "(DSM 개인 설정 → 보안 → 신뢰할 수 있는 기기에서 해제 가능).")
     fields = [
         url_field("https://192.168.0.x:5001"),
         field("username", "아이디", required=True, ph="homeops"),
         field("password", "비밀번호", secret=True, required=True),
+        field("otp_code", "2단계 인증 코드 (켠 계정만, 처음 한 번)", ph="6자리 — 저장하면 기기로 등록되고 이후엔 필요 없음"),
+        field("device_id", "등록된 기기 ID", kind="hidden", secret=True),
         verify_field(default=False),
     ]
 
-    def _client(self) -> Client:
+    def _client(self, use_otp: bool = False) -> Client:
         return Client(SynologyCfg(url=self.cfg["url"], username=self.cfg.get("username") or "",
-                                  password=self.cfg.get("password") or "", verify_ssl=self.cfg.get("verify_ssl", False)))
+                                  password=self.cfg.get("password") or "", verify_ssl=self.cfg.get("verify_ssl", False)),
+                      otp_code=(self.cfg.get("otp_code") or "") if use_otp else "",
+                      device_id=self.cfg.get("device_id") or "")
+
+    def _key(self) -> tuple[str, str]:
+        return (self.cfg.get("url", ""), self.cfg.get("username", ""))
+
+    async def test(self) -> str:
+        otp = bool((self.cfg.get("otp_code") or "").strip())
+        c = self._client(use_otp=otp)
+        n = await c.status()
+        msg = f"연결됨 · {n.get('model')} · {n.get('version')}"
+        if c.new_device_id:
+            # OTP는 한 번만 쓸 수 있으므로, 이어서 저장할 때 쓰도록 받아 둔다
+            _PENDING_DEVICE[self._key()] = c.new_device_id
+            msg += " · 2단계 인증 확인됨 (저장하면 기기로 등록)"
+        return msg
+
+    async def before_save(self) -> dict:
+        cfg = dict(self.cfg)
+        if (cfg.get("otp_code") or "").strip():
+            did = _PENDING_DEVICE.pop(self._key(), None)
+            if not did:
+                c = self._client(use_otp=True)
+                await c.status()
+                did = c.new_device_id
+            if did:
+                cfg["device_id"] = did
+        cfg["otp_code"] = ""   # 일회용 코드는 저장하지 않음
+        return cfg
 
     async def status(self) -> dict:
         n = await self._client().status()

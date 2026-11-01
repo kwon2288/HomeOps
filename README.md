@@ -136,7 +136,7 @@ rm -rf /var/lib/homeops
 | Hubitat (허브마다) | 허브 주소, Maker API App ID · Access Token | 허브 웹 → Apps → Add Built-In App → **Maker API** ("Allow Access via Local IP Address" 켜기, 관리할 기기 선택). 예시 URL `/apps/api/<App ID>/...?access_token=<토큰>` |
 | Home Assistant | 주소, 장기 액세스 토큰 | HA 프로필 → 보안 → 장기 액세스 토큰 |
 | Homebridge | 주소, UI 로그인 계정 | config-ui-x 계정. 액세서리 목록·HB 배지는 insecure 모드(-I) 필요 |
-| Synology NAS | 주소, 전용 계정 | 제어판 → 사용자. 2단계 인증 끄기, 재부팅·스토리지 조회에 관리자 그룹 필요 |
+| Synology NAS | 주소, 계정 (전용 계정 권장) | 제어판 → 사용자. 재부팅·스토리지 조회에 관리자 그룹 필요. **2단계 인증을 켠 계정**이면 처음 저장할 때 인증 앱의 6자리 코드를 함께 넣으면 HomeOps가 DSM의 신뢰할 수 있는 기기로 등록되어 이후엔 코드 없이 로그인 (개인 설정 → 보안 → 신뢰할 수 있는 기기에서 해제 가능) |
 | Proxmox VE | 주소, 토큰 ID · Secret | Datacenter → Permissions → API Tokens. 권장 권한: VM.Audit, VM.PowerMgmt, VM.Snapshot, VM.Backup, Datastore.Audit, Datastore.AllocateSpace, Sys.Audit |
 | Portainer | 주소, Access Token | My account → Access tokens |
 | UniFi Network | 콘솔 주소, API 키 | UniFi 콘솔(UDR 등)의 Network 앱 → Settings → Integrations(버전에 따라 Control Plane → Integrations). 주소는 `https://192.168.0.1`처럼 콘솔 주소 그대로 |
@@ -251,6 +251,12 @@ class MyThing(Integration):
 위험한 작업(재부팅·종료·중지·재시작)은 본문에 `{"confirm": true}`가 있어야 실행됩니다.
 
 ## 변경 이력
+
+### v0.6.1 — 2026-11-01
+- **Synology 2단계 인증 계정 지원**: 처음 한 번 OTP 코드를 넣고 저장하면 DSM의 "신뢰할 수 있는 기기"로 등록되어 이후에는 코드 없이 로그인 (DSM 6 · 7)
+- 연결 테스트에서 OTP를 확인한 뒤 저장해도 같은 코드를 다시 요구하지 않음
+- DSM 로그인 오류를 원인별로 안내 (비밀번호 틀림, OTP 필요, OTP 틀림, IP 차단 등)
+- 연동 플러그인에 저장 직전 설정을 고치는 `before_save()`와 화면에 안 보이는 저장값(`hidden`) 추가
 
 ### v0.6.0 — 2026-11-01
 - **연동을 플러그인 구조로 변경** — 새 시스템은 `app/integrations/`에 파일 하나만 추가하면 화면(연결 추가 목록, 입력 폼, 상태 카드, 작업 버튼)이 자동으로 만들어짐

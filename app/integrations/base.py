@@ -27,7 +27,8 @@ from ..connectors.base import ConnectorError
 def field(name: str, label: str, *, kind: str = "text", secret: bool = False, required: bool = False,
           ph: str = "", default: Any = None, full: bool = False, help: str = "",
           options: list[tuple[str, str]] | None = None) -> dict:
-    """kind: text | url | number | bool | select (options=[(값, 표시 이름)]). secret=True 면 암호화 저장·화면에 가림."""
+    """kind: text | url | number | bool | select (options=[(값, 표시 이름)]) | hidden (화면에 안 보이는 저장값).
+    secret=True 면 암호화 저장·화면에 가림."""
     return {"name": name, "label": label, "kind": kind, "secret": secret, "required": required, "ph": ph,
             "default": default, "full": full, "help": help, "options": [list(o) for o in (options or [])]}
 
@@ -164,6 +165,10 @@ class Integration:
 
     async def action(self, action: str, params: dict) -> Any:
         raise ConnectorError("지원하지 않는 작업입니다")
+
+    async def before_save(self) -> dict:
+        """저장 직전에 설정을 고칠 기회 (예: 일회용 코드로 기기 등록 후 코드는 지우고 토큰만 저장)."""
+        return self.cfg
 
     def confirm_required(self, action: str) -> bool:
         """서버 쪽에서도 확인을 요구할 위험 작업."""

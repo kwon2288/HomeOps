@@ -110,3 +110,69 @@ def test_connection_test(client):
     respx.get("https://ptn.test/api/status").mock(return_value=httpx.Response(401))
     r = client.post("/api/connections/test", json={"type": "portainer", "config": {"url": "https://ptn.test", "api_key": "k"}}).json()
     assert r["ok"] is False and "인증 실패" in r["message"]
+
+
+@respx.mock
+def test_synology_two_factor_device_token(client):
+    """2단계 인증 계정: OTP로 한 번 로그인 → 기기 ID 저장 → 이후 코드 없이 로그인."""
+    nas = "https://nas.test:5001"
+    seen = []
+
+    def auth(request):
+        p = dict(request.url.params)
+        seen.append(p)
+        if p.get("method") == "logout":
+            return httpx.Response(200, json={"success": True})
+        if p.get("otp_code") == "123456" and p.get("enable_device_token") == "yes":
+            # DSM 7 형식 (device_id). DSM 6 은 did
+            return httpx.Response(200, json={"success": True, "data": {"sid": "s1", "device_id": "dev-abc"}})
+        if p.get("otp_code"):
+            return httpx.Response(200, json={"success": False, "error": {"code": 404}})
+        if p.get("device_id") == "dev-abc":
+            return httpx.Response(200, json={"success": True, "data": {"sid": "s2"}})
+        return httpx.Response(200, json={"success": False, "error": {"code": 403}})
+
+    def entry(request):
+        api = request.url.params["api"]
+        if api == "SYNO.Core.System":
+            return httpx.Response(200, json={"success": True, "data": {"model": "DS920+", "firmware_ver": "DSM 7.2.2"}})
+        if api == "SYNO.Core.System.Utilization":
+            return httpx.Response(200, json={"success": True, "data": {"cpu": {"user_load": 5}, "memory": {"real_usage": 40}}})
+        return httpx.Response(200, json={"success": True, "data": {"volumes": [], "disks": []}})
+
+    respx.get(f"{nas}/webapi/auth.cgi").mock(side_effect=auth)
+    respx.get(f"{nas}/webapi/entry.cgi").mock(side_effect=entry)
+    base = {"type": "synology", "name": "NAS", "config": {"url": nas, "username": "min", "password": "pw"}}
+
+    # 코드 없이: 2단계 인증 필요 안내
+    r = client.post("/api/connections/test", json=base).json()
+    assert r["ok"] is False and "2단계 인증 코드" in r["message"]
+    # 틀린 코드
+    bad = client.post("/api/connections/test", json={**base, "config": {**base["config"], "otp_code": "000000"}}).json()
+    assert bad["ok"] is False and "맞지 않거나" in bad["message"]
+    # 맞는 코드로 테스트 → 이어서 저장 (같은 코드를 다시 쓰지 않고 받아 둔 기기 ID 사용)
+    with_otp = {**base, "config": {**base["config"], "otp_code": "123456"}}
+    r = client.post("/api/connections/test", json=with_otp).json()
+    assert r["ok"] and "2단계 인증 확인됨" in r["message"]
+    n_before = len(seen)
+    saved = client.post("/api/connections", json=with_otp)
+    assert saved.status_code == 200, saved.text
+    assert len(seen) == n_before  # 저장 때 OTP 로그인을 다시 하지 않음
+    cfg = client.app.state.ctx.settings.conn("synology").config
+    assert cfg["device_id"] == "dev-abc" and cfg["otp_code"] == ""
+    assert saved.json()["config"]["device_id"] == MASK
+
+    # 이후 상태 조회는 기기 ID로 로그인
+    st = client.get("/api/status").json()[0]
+    assert st["online"], st
+    logins = [p for p in seen if p.get("method") == "login"]
+    assert logins[-1].get("device_id") == "dev-abc" and "otp_code" not in logins[-1]
+
+    # 편집해서 이름만 바꿔도 기기 ID 유지
+    client.put("/api/connections/synology", json={"name": "NAS 2", "config": {"url": nas, "username": "min"}})
+    assert client.app.state.ctx.settings.conn("synology").config["device_id"] == "dev-abc"
+
+    # 테스트 없이 바로 저장해도 등록됨
+    client.delete("/api/connections/synology")
+    saved = client.post("/api/connections", json=with_otp)
+    assert saved.status_code == 200 and client.app.state.ctx.settings.conn("synology").config["device_id"] == "dev-abc"
