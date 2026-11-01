@@ -29,6 +29,7 @@ def test_backup_requires_password(client):
 def test_backup_and_restore_local(runtime):
     c = make_client(Settings(proxmox={"url": "https://pve.test", "token_id": "a@pve!b", "token_secret": "pve-secret"}), runtime)
     assert _setup_backup(c)["password"] == MASK
+    c.post("/api/registry/devices", json={"name": "Apple TV 4K", "platform": "HomeKit", "roles": ["HomeKit 홈 허브"]})
 
     r = c.post("/api/backup/run", json={})
     assert r.status_code == 200, r.text

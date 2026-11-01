@@ -37,11 +37,16 @@ def test_login_ok(client):
 
 # ---- 수동 등록 · 플랫폼 · 경로 ----
 
-def test_seed_and_crud(client):
-    devices = client.get("/api/registry/devices").json()
-    assert any(d["name"] == "Apple TV 4K" for d in devices)
-    assert client.get("/api/registry/platforms").json()
-    assert client.get("/api/registry/paths").json()
+def test_starts_empty_and_crud(client):
+    # 처음에는 아무것도 없다
+    assert client.get("/api/registry/devices").json() == []
+    assert client.get("/api/registry/platforms").json() == []
+    assert client.get("/api/registry/paths").json() == []
+    sm = client.get("/api/smarthome").json()
+    assert sm["sources"] == {"hubitat": 0, "home_assistant": False}
+    assert sm["devices"] == [] and sm["paths"] == [] and sm["alerts"] == []
+    infra = client.get("/api/infra").json()
+    assert not any(v["configured"] for v in infra.values())
 
     r = client.post("/api/registry/devices", json={
         "name": "테스트 허브", "platform": "Aqara", "ip": "192.168.0.50", "roles": ["Matter 브리지"]})
@@ -142,7 +147,9 @@ def test_smarthome_overview(runtime):
     on = respx.get(f"{api}/devices/1/on").mock(return_value=httpx.Response(200, json={}))
 
     c = make_client(Settings(hubitat=[HUB]), runtime)
+    c.post("/api/registry/paths", json={"src": "SmartThings", "via": "HubiThings Replica", "dst": "Hubitat Main", "check_ref": "hubitat:main"})
     d = c.get("/api/smarthome").json()
+    assert d["sources"]["hubitat"] == 1
     assert d["mode"] == "Away" and d["hsm"] == "armedAway"
     assert len(d["devices"]) == 3
     titles = [a["title"] for a in d["alerts"]]

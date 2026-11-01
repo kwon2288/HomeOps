@@ -118,6 +118,8 @@ async def overview(request: Request) -> dict:
     return {
         "mode": mh.get("mode"), "hsm": mh.get("hsm"),
         "paths": paths, "devices": devices, "alerts": alerts,
+        # 기기를 가져올 수 있는 연결이 있는지 (없으면 화면은 "연결하기" 안내)
+        "sources": {"hubitat": sum(1 for h in s.hubitat if h.maker_api), "home_assistant": bool(s.home_assistant)},
     }
 
 

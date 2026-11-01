@@ -56,7 +56,6 @@ TABLES = {
     "integration_paths": ["src", "via", "dst", "check_ref", "sort"],
 }
 
-SEED_DEFAULT = Path(__file__).with_name("seed_default.yaml")
 
 
 class Database:
@@ -66,7 +65,8 @@ class Database:
         self._lock = threading.Lock()
         with self._conn() as c:
             c.executescript(SCHEMA)
-        self._seed(seed_path or SEED_DEFAULT)
+        if seed_path:  # 기본은 빈 상태. HOMEOPS_SEED 로 초기값 파일을 줄 때만
+            self._seed(seed_path)
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path)

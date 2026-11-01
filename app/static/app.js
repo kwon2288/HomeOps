@@ -179,12 +179,34 @@ $("#logout").addEventListener("click", async () => {
 });
 
 /* ---------- 인프라 ---------- */
+/** 아무것도 연결하지 않았을 때: 바로 추가할 수 있는 종류 버튼 */
+function emptyStart(title, desc, types) {
+  return `<section class="card onboarding"><div class="card-title"><h2>${esc(title)}</h2><small>${esc(desc)}</small></div>
+    <div class="picker">${types.map((k) => {
+      const t = CONN_TYPES.find((c) => c.key === k);
+      return `<a class="pick" href="#/settings?add=${k}"><b>+ ${esc(t.title)}</b><small>${esc(t.desc)}</small></a>`;
+    }).join("")}</div></section>`;
+}
+
+function addMore(types, configured) {
+  const rest = types.filter((k) => !configured.includes(k) || k === "hubitat");
+  return rest.length ? `<div class="chips">${rest.map((k) => {
+    const t = CONN_TYPES.find((c) => c.key === k);
+    return `<a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="#/settings?add=${k}">+ ${esc(t.title)}</a>`;
+  }).join("")}</div>` : "";
+}
+
 async function renderInfra() {
   const d = await api("/api/infra");
-  view.innerHTML = `
-    <header class="page-head"><div><h1>인프라</h1><p>Synology NAS · Proxmox VE · Portainer</p></div>
+  const keys = [["synology", d.nas, nasPanel], ["proxmox", d.proxmox, pvePanel], ["portainer", d.portainer, ptnPanel]];
+  const on = keys.filter(([, sys]) => sys.configured);
+  view.innerHTML = on.length ? `
+    <header class="page-head"><div><h1>인프라</h1><p>${on.map(([k]) => esc(CONN_TYPES.find((c) => c.key === k).title)).join(" · ")}</p></div>
       <button class="btn accent" data-refresh>새로 고침</button></header>
-    <div class="grid wide">${nasPanel(d.nas)}${pvePanel(d.proxmox)}${ptnPanel(d.portainer)}</div>`;
+    <div class="grid wide">${on.map(([, sys, fn]) => fn(sys)).join("")}</div>
+    ${addMore(["synology", "proxmox", "portainer"], on.map(([k]) => k))}`
+    : `<header class="page-head"><div><h1>인프라</h1><p>아직 연결한 인프라가 없어요.</p></div></header>
+    ${emptyStart("인프라 연결하기", "쓰는 것만 골라 연결하면 이 화면에 나타납니다.", ["synology", "proxmox", "portainer"])}`;
 }
 
 function notConfigured(name, how) {
@@ -286,28 +308,33 @@ async function renderHubs() {
     api("/api/hubs"), api("/api/registry/devices"), api("/api/registry/platforms"), api("/api/hubs/hubitat/backups"),
   ]);
   const cards = [
-    ...(hubs.hubitat.length ? hubs.hubitat.map(hubitatCard) : ['<article class="card"><div class="card-head"><div class="card-title"><b>Hubitat</b></div><span class="badge"><span class="dot"></span>연결 전</span></div><div class="howto"><b class="howto-title">연결 방법</b>허브마다 Maker API 앱을 설치하고 <a href="#/settings">연결 설정</a>에서 허브를 추가하세요.</div></article>']),
-    haCard(hubs.home_assistant),
-    hbCard(hubs.homebridge),
+    ...hubs.hubitat.map(hubitatCard),
+    hubs.home_assistant.configured ? haCard(hubs.home_assistant) : "",
+    hubs.homebridge.configured ? hbCard(hubs.homebridge) : "",
   ].join("");
+  const configured = [...(hubs.hubitat.length ? ["hubitat"] : []), ...(hubs.home_assistant.configured ? ["home_assistant"] : []),
+    ...(hubs.homebridge.configured ? ["homebridge"] : [])];
   const online = hubs.hubitat.filter((h) => h.online).length + (hubs.home_assistant.online ? 1 : 0) + (hubs.homebridge.online ? 1 : 0);
   const total = hubs.hubitat.length + (hubs.home_assistant.configured ? 1 : 0) + (hubs.homebridge.configured ? 1 : 0);
   view.innerHTML = `
     <header class="page-head"><div><h1>스마트홈 허브</h1><p>API로 관리하는 허브와, 연동은 안 되지만 역할을 기록해 두는 기기</p></div>
-      <button class="btn accent" data-refresh>새로 고침</button></header>
-    <section class="section"><div class="section-head"><h2>허브 상태 · API 연동</h2><span class="muted" style="font-size:13px">${total}개 중 ${online}개 응답</span></div>
+      ${total ? '<button class="btn accent" data-refresh>새로 고침</button>' : ""}</header>
+    ${total ? `<section class="section"><div class="section-head"><h2>허브 상태</h2><span class="muted" style="font-size:13px">${total}개 중 ${online}개 응답</span></div>
       <div class="grid">${cards}</div>
+      ${addMore(["hubitat", "home_assistant", "homebridge"], configured)}`
+      : `<section class="section">${emptyStart("허브 연결하기", "Hubitat, Home Assistant, Homebridge 중 쓰는 것만 연결하세요.", ["hubitat", "home_assistant", "homebridge"])}`}
       ${backups.length ? `<details class="card"><summary style="cursor:pointer;font-size:14px">Hubitat 백업 파일 ${backups.length}개</summary>
         <div class="rows">${backups.map((b) => `<div class="row"><div class="row-main"><b class="mono">${esc(b.file)}</b><small>${(b.size / 1048576).toFixed(1)} MB · ${new Date(b.mtime * 1000).toLocaleString("ko-KR")}</small></div>
         <a class="btn sm" style="display:inline-flex;align-items:center;text-decoration:none" href="/api/hubs/hubitat/backups/${encodeURIComponent(b.file)}" download>받기</a></div>`).join("")}</div></details>` : ""}
     </section>
     <section class="section"><div class="section-head"><div><h2>수동 등록 기기</h2><p>API 연동은 없지만 IP를 넣으면 응답 여부(ping)를 확인합니다</p></div>
-      <div class="chips"><button class="btn" data-act="ping-all">전체 응답 확인</button><button class="btn accent" data-act="dev-add">+ 기기 등록</button></div></div>
-      <div class="grid mid">${devices.map(manualCard).join("") || '<div class="empty">등록된 기기가 없습니다</div>'}</div>
+      <div class="chips">${devices.some((d) => d.ip) ? '<button class="btn" data-act="ping-all">전체 응답 확인</button>' : ""}<button class="btn accent" data-act="dev-add">+ 기기 등록</button></div></div>
+      <div class="grid mid">${devices.map(manualCard).join("") || '<div class="empty">Apple TV, HomePod, Nest Hub, Aqara 허브처럼 API로 연결하지 않는 기기를 역할과 함께 적어 둘 수 있어요. "+ 기기 등록"을 누르세요.</div>'}</div>
     </section>
     <section class="section"><div class="section-head"><div><h2>플랫폼 역할</h2><p>플랫폼마다 무엇을 맡기는지</p></div>
       <button class="btn" data-act="pf-add">플랫폼 추가</button></div>
-      <div class="table-wrap"><table class="stack-table full" style="min-width:860px"><thead><tr><th scope="col">플랫폼</th><th scope="col">용도</th><th scope="col">주요 기능 · 담당 기기</th><th scope="col">허브 · 연결 경로</th><th scope="col"><span class="muted">편집</span></th></tr></thead>
+      ${platforms.length ? "" : '<div class="empty">플랫폼마다 무엇을 맡기는지 정리해 두는 표입니다. "플랫폼 추가"로 시작하세요.</div>'}
+      <div class="table-wrap" ${platforms.length ? "" : "hidden"}><table class="stack-table full" style="min-width:860px"><thead><tr><th scope="col">플랫폼</th><th scope="col">용도</th><th scope="col">주요 기능 · 담당 기기</th><th scope="col">허브 · 연결 경로</th><th scope="col"><span class="muted">편집</span></th></tr></thead>
       <tbody>${platforms.map((p) => `<tr><th scope="row">${esc(p.name)}</th><td><span class="tag">${esc(p.use)}</span></td><td>${esc(p.features)}</td><td>${esc(p.path)}</td>
         <td class="cell-actions" style="white-space:nowrap"><button class="btn sm" data-act="pf-edit" data-k="${p.id}">편집</button> <button class="btn sm danger" data-act="pf-del" data-k="${p.id}" aria-label="${esc(p.name)} 삭제">삭제</button></td></tr>`).join("")}</tbody></table></div>
     </section>`;
@@ -406,35 +433,44 @@ async function renderIntegration() {
 
 function drawIntegration() {
   const d = view._sm;
+  const hasSource = d.sources.hubitat > 0 || d.sources.home_assistant;
   const rooms = ["전체", ...new Set(d.devices.map((x) => x.room))];
   if (!rooms.includes(roomFilter)) roomFilter = "전체";
   const shown = d.devices.filter((x) => roomFilter === "전체" || x.room === roomFilter);
   const statusChip = { ok: '<span class="badge ok">응답 중</span>', down: '<span class="badge bad">응답 없음</span>', unknown: '<span class="badge">연결 전</span>', unchecked: '<span class="badge">확인 안 함</span>' };
   const away = (d.mode || "").toLowerCase() === "away";
-  view.innerHTML = `
-    <header class="page-head"><div><h1>스마트홈 연동</h1><p>플랫폼 간 연동 경로와 기기 제어</p></div>
-      <div class="chips">
-        <span class="chip"><span class="dot ${away ? "warn" : "ok"}"></span>모드 · ${esc(d.mode || "—")}</span>
-        <span class="chip">HSM · ${esc(d.hsm || "—")}</span>
-        <button class="btn accent" data-refresh>새로 고침</button></div></header>
-    <section class="section"><div class="section-head"><div><h2>연동 경로</h2><p>어느 플랫폼이 어떤 방식으로 어디에 연결되는지</p></div>
-      <button class="btn" data-act="path-add">경로 추가</button></div>
-      <div class="table-wrap"><table class="stack-table" style="min-width:720px"><thead><tr><th scope="col">출발</th><th scope="col">연동 방식</th><th scope="col">도착</th><th scope="col">상태</th><th scope="col"><span class="muted">편집</span></th></tr></thead>
-      <tbody>${d.paths.map((p) => `<tr><th scope="row">${esc(p.src)}</th><td><span class="path-arrow" aria-hidden="true">→ </span>${esc(p.via)}</td><td><span class="path-arrow" aria-hidden="true">→ </span>${esc(p.dst)}</td>
-        <td>${statusChip[p.status] || statusChip.unknown}</td>
-        <td class="cell-actions" style="white-space:nowrap"><button class="btn sm" data-act="path-edit" data-k="${p.id}">편집</button> <button class="btn sm danger" data-act="path-del" data-k="${p.id}">삭제</button></td></tr>`).join("")}</tbody></table></div>
-    </section>
-    <div class="split">
+  const chips = [
+    d.mode ? `<span class="chip"><span class="dot ${away ? "warn" : "ok"}"></span>모드 · ${esc(d.mode)}</span>` : "",
+    d.hsm ? `<span class="chip">HSM · ${esc(d.hsm)}</span>` : "",
+    hasSource ? '<button class="btn accent" data-refresh>새로 고침</button>' : "",
+  ].join("");
+
+  const devicesHtml = !hasSource
+    ? emptyStart("기기 제어", "Hubitat(Maker API)이나 Home Assistant를 연결하면 방별 기기 목록과 켜기/끄기가 여기에 나타납니다.", ["hubitat", "home_assistant"])
+    : `<div class="split">
       <section class="section grow"><div class="section-head"><h2>기기 제어</h2>
-        <div class="filters" role="group" aria-label="방 필터">${rooms.map((r) => `<button type="button" data-room="${esc(r)}" aria-pressed="${r === roomFilter}">${esc(r)}</button>`).join("")}</div></div>
-        <div class="legend"><span><span class="src HE">HE</span>Hubitat</span><span><span class="src HA">HA</span>Home Assistant</span><span><span class="src HB">HB</span>Homebridge → HomeKit 노출</span></div>
-        <div class="list">${shown.map(deviceRow).join("") || '<div class="empty" style="border:none">표시할 기기가 없습니다. <a href="#/settings">연결 설정</a>에서 Hubitat Maker API나 Home Assistant를 연결하세요.</div>'}</div>
-        <span class="muted" style="font-size:12px">표시 ${shown.length}개 · 전체 ${d.devices.length}개</span>
+        ${d.devices.length ? `<div class="filters" role="group" aria-label="방 필터">${rooms.map((r) => `<button type="button" data-room="${esc(r)}" aria-pressed="${r === roomFilter}">${esc(r)}</button>`).join("")}</div>` : ""}</div>
+        ${d.devices.length ? '<div class="legend"><span><span class="src HE">HE</span>Hubitat</span><span><span class="src HA">HA</span>Home Assistant</span><span><span class="src HB">HB</span>Homebridge → HomeKit 노출</span></div>' : ""}
+        <div class="list">${shown.map(deviceRow).join("") || '<div class="empty" style="border:none">가져온 기기가 없습니다. Maker API에서 관리할 기기를 골랐는지 확인하세요.</div>'}</div>
+        ${d.devices.length ? `<span class="muted" style="font-size:12px">표시 ${shown.length}개 · 전체 ${d.devices.length}개</span>` : ""}
       </section>
       <aside class="rail" aria-labelledby="al-h"><h2 id="al-h" style="margin:0;font-size:17px">확인 필요</h2>
         ${d.alerts.map((a) => `<div class="alert ${a.kind}"><span class="ico" aria-hidden="true">${a.kind === "down" ? "×" : "!"}</span><div><b>${esc(a.title)}</b><p>${esc(a.body)}</p></div></div>`).join("") || '<div class="empty">지금은 확인할 것이 없습니다</div>'}
       </aside>
     </div>`;
+
+  view.innerHTML = `
+    <header class="page-head"><div><h1>스마트홈 연동</h1><p>플랫폼 간 연동 경로와 기기 제어</p></div>
+      ${chips ? `<div class="chips">${chips}</div>` : ""}</header>
+    ${devicesHtml}
+    <section class="section"><div class="section-head"><div><h2>연동 경로</h2><p>어느 플랫폼이 어떤 방식으로 어디에 연결되는지 적어 두면, 연결한 시스템의 응답 여부로 상태를 보여 줍니다.</p></div>
+      <button class="btn" data-act="path-add">+ 경로 추가</button></div>
+      ${d.paths.length ? `<div class="table-wrap"><table class="stack-table" style="min-width:720px"><thead><tr><th scope="col">출발</th><th scope="col">연동 방식</th><th scope="col">도착</th><th scope="col">상태</th><th scope="col"><span class="muted">편집</span></th></tr></thead>
+      <tbody>${d.paths.map((p) => `<tr><th scope="row">${esc(p.src)}</th><td><span class="path-arrow" aria-hidden="true">→ </span>${esc(p.via)}</td><td><span class="path-arrow" aria-hidden="true">→ </span>${esc(p.dst)}</td>
+        <td>${statusChip[p.status] || statusChip.unknown}</td>
+        <td class="cell-actions" style="white-space:nowrap"><button class="btn sm" data-act="path-edit" data-k="${p.id}">편집</button> <button class="btn sm danger" data-act="path-del" data-k="${p.id}">삭제</button></td></tr>`).join("")}</tbody></table></div>`
+      : '<div class="empty">아직 적어 둔 연동 경로가 없습니다. 예: SmartThings → HubiThings Replica → Hubitat</div>'}
+    </section>`;
 }
 
 function deviceRow(x) {
@@ -617,6 +653,10 @@ async function renderSettings() {
   view._editing = new Set();
   view._adding = new Set();
   drawSettings();
+  // 다른 화면의 "+ 추가" 버튼으로 들어온 경우 (#/settings?add=종류)
+  const add = new URLSearchParams(location.hash.split("?")[1] || "").get("add");
+  history.replaceState(null, "", "#/settings");
+  if (add && CONN_TYPES.some((t) => t.key === add) && (add === "hubitat" || !s[add])) startAdd(add);
 }
 
 function drawSettings() {

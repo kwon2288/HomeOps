@@ -13,6 +13,7 @@
 
 - 재부팅·종료·중지 같은 위험한 작업은 확인 창을 한 번 더 거치고, 모든 제어·설정 변경은 **작업 기록**에 남습니다.
 - 휴대폰에서는 하단 탭 메뉴로 바뀝니다 (홈 화면에 추가해 앱처럼 쓸 수 있음).
+- 처음에는 아무것도 없는 상태로 시작합니다. 연결한 시스템만 각 메뉴에 나타나고, 빈 화면에서 바로 "+ 추가"로 연결할 수 있습니다.
 - 토큰·비밀번호는 암호화해서 저장하고, 화면에는 "저장됨"으로만 표시합니다. 바꿀 때만 새로 입력하면 됩니다.
 
 ## 설치
@@ -152,7 +153,7 @@ rm -rf /var/lib/homeops
 | `HOMEOPS_BACKUP_KEEP` | `10` | Hubitat 백업 파일 보관 개수 (허브별) |
 | `HOMEOPS_SECRET_KEY` | 자동 생성 | 지정하지 않으면 데이터 폴더에 `secret.key`를 만들어 씁니다 |
 | `HOMEOPS_ADMIN_USER` / `HOMEOPS_ADMIN_PASSWORD` | 없음 | 웹 계정 대신 고정 계정을 쓰고 싶을 때만. 지정하면 웹 계정 만들기·비밀번호 변경이 꺼집니다 |
-| `HOMEOPS_SEED` | 없음 | 수동 등록 기기·플랫폼 역할·연동 경로의 첫 기본값 파일 (기본: `app/seed_default.yaml`) |
+| `HOMEOPS_SEED` | 없음 | 비어 있는 DB에 수동 등록 기기·플랫폼 역할·연동 경로를 미리 넣을 YAML 파일 (`manual_devices`, `platforms`, `integration_paths` 목록) |
 
 ## 개발
 
@@ -171,7 +172,6 @@ app/
   auth.py            첫 실행 계정 만들기, 로그인, 비밀번호 변경
   core.py            공통 헬퍼 (상태 감싸기, 작업 기록, ping)
   db.py              SQLite
-  seed_default.yaml  첫 실행 기본값
   connectors/        시스템별 API 클라이언트
   routers/           infra · hubs · registry · smarthome · settings · backup
   static/            웹 화면 (index.html, app.css, app.js — 빌드 과정 없음)
@@ -196,6 +196,14 @@ tests/               pytest (외부 API는 respx로 흉내, FTP·WebDAV는 실�
 위험한 작업(재부팅·종료·중지·재시작)은 본문에 `{"confirm": true}`가 있어야 실행됩니다.
 
 ## 변경 이력
+
+### v0.5.0 — 2026-11-01
+- **아무것도 없는 상태로 시작**
+  - 기본으로 들어가던 수동 등록 기기 · 플랫폼 역할 · 연동 경로 예시 데이터 제거
+  - 인프라 · 스마트홈 허브 화면은 연결한 시스템만 표시 (연결 전 빈 카드 없음)
+  - 빈 화면에서 바로 "+ Proxmox VE", "+ Hubitat 허브"처럼 눌러 연결 설정으로 이동, 입력 폼이 열린 상태로 시작
+  - 스마트홈 연동 화면은 기기를 가져올 연결(Hubitat Maker API · Home Assistant)이 생기기 전까지 연결 안내만 표시
+- 왼쪽 메뉴를 "인프라 · 스마트홈 허브 · 스마트홈 연동" 세 항목으로 단순화
 
 ### v0.4.0 — 2026-11-01
 - **연결 설정을 "필요한 것만 추가" 방식으로 변경**
