@@ -23,24 +23,59 @@ SAFE_ID = re.compile(r"^\d{1,8}$")
 PROBE_TIMEOUT = httpx.Timeout(8.0, connect=4.0)
 # /devices/all 은 고른 기기 전체의 속성까지 보내서, 기기가 많은 허브에서는 수십 초 걸리기도 한다
 FULL_LIST_TIMEOUT = httpx.Timeout(45.0, connect=4.0)
+LOGIN_TIMEOUT = httpx.Timeout(6.0, connect=4.0)
 
 
 class Hubitat:
     def __init__(self, cfg: HubitatCfg):
         self.cfg = cfg
         self.base = cfg.url.rstrip("/")
+        self.note: str | None = None        # 관리 정보를 못 읽은 이유 (화면에 보여 줌)
+        self._logged_in = False
+        self._login_lock = asyncio.Lock()
 
     @asynccontextmanager
     async def _session(self) -> AsyncIterator[httpx.AsyncClient]:
-        """허브에 닿는지 확인하고, 허브 로그인을 켰으면 로그인까지 한 연결."""
+        """허브에 닿는지 확인한 연결. 로그인은 허브가 실제로 로그인 화면을 돌려줄 때만 한다 (_admin)."""
         async with make_client() as client:
             await self._probe(client)
-            if self.cfg.login:
-                await client.post(
-                    f"{self.base}/login",
-                    data={"username": self.cfg.login.username, "password": self.cfg.login.password, "submit": "Login"},
-                )
             yield client
+
+    @staticmethod
+    def _locked(r: httpx.Response) -> bool:
+        """허브 로그인 보안 때문에 로그인 화면으로 돌려보냈는지."""
+        if r.status_code in (401, 403) or r.url.path.rstrip("/").endswith("/login"):
+            return True
+        return r.headers.get("content-type", "").startswith("text/html") and 'type="password"' in r.text
+
+    async def _login(self, c: httpx.AsyncClient) -> None:
+        if not self.cfg.login:
+            raise ConnectorError("허브 로그인 보안이 켜져 있습니다 — 연결 설정에 허브 로그인 아이디와 비밀번호를 넣으세요")
+        try:
+            await c.get(f"{self.base}/login", timeout=LOGIN_TIMEOUT)   # 세션 쿠키 먼저 받기
+            r = await c.post(
+                f"{self.base}/login", timeout=LOGIN_TIMEOUT,
+                data={"username": self.cfg.login.username, "password": self.cfg.login.password, "submit": "Login"},
+            )
+        except httpx.TimeoutException as exc:
+            raise ConnectorError(f"허브 로그인(POST /login)에 {LOGIN_TIMEOUT.read:.0f}초 동안 응답이 없습니다") from exc
+        if r.url.path.rstrip("/").endswith("/login") and r.status_code < 400 and 'type="password"' in r.text:
+            raise ConnectorError("허브 로그인 실패 — 허브 로그인 아이디와 비밀번호를 확인하세요")
+
+    async def _admin(self, c: httpx.AsyncClient, method: str, path: str, **kw: Any) -> httpx.Response:
+        """허브 관리 URL 호출. 로그인 화면이 오면 그때만 로그인하고 한 번 더 시도한다."""
+        url = f"{self.base}{path}"
+        r = await c.request(method, url, **kw)
+        if not self._locked(r):
+            return r
+        async with self._login_lock:      # 동시에 여러 요청이 로그인하지 않도록
+            if not self._logged_in:
+                await self._login(c)
+                self._logged_in = True
+        r = await c.request(method, url, **kw)
+        if self._locked(r):
+            raise ConnectorError("허브 로그인 후에도 관리 화면에 들어가지 못했습니다 — 허브 로그인 아이디와 비밀번호를 확인하세요")
+        return r
 
     async def _probe(self, c: httpx.AsyncClient) -> httpx.Response:
         """허브에 닿는지 먼저 짧게 확인한다. 안 닿으면 여러 요청을 기다리지 않고 바로 이유를 알려 준다."""
@@ -62,15 +97,15 @@ class Hubitat:
         url = f"{self.base}/apps/api/{self.cfg.maker_api.app_id}{path}"
         return url, {"access_token": self.cfg.maker_api.token}
 
-    @staticmethod
-    async def _text(client: httpx.AsyncClient, url: str) -> str | None:
+    async def _text(self, client: httpx.AsyncClient, path: str) -> str | None:
         try:
-            r = await client.get(url)
+            r = await self._admin(client, "GET", path)
             r.raise_for_status()
             text = r.text.strip()
-            if text.startswith("<"):  # 로그인 페이지로 돌려보낸 경우
-                return None
-            return text
+            return None if text.startswith("<") else text
+        except ConnectorError as exc:
+            self.note = str(exc)
+            return None
         except httpx.HTTPError:
             return None
 
@@ -107,9 +142,9 @@ class Hubitat:
 
             # 여러 요청을 한꺼번에 (하나씩 기다리면 느린 허브에서 전체 시간 초과가 남)
             mem, temp, db, *_ = await asyncio.gather(
-                self._text(c, f"{self.base}/hub/advanced/freeOSMemory"),
-                self._text(c, f"{self.base}/hub/advanced/internalTempCelsius"),
-                self._text(c, f"{self.base}/hub/advanced/databaseSize"),
+                self._text(c, "/hub/advanced/freeOSMemory"),
+                self._text(c, "/hub/advanced/internalTempCelsius"),
+                self._text(c, "/hub/advanced/databaseSize"),
                 fw(), count(),
             )
             mem, temp, db = self._num(mem), self._num(temp), self._num(db)
@@ -117,6 +152,7 @@ class Hubitat:
             out["temperature_c"] = temp
             out["database_mb"] = db
             out["online"] = any(v is not None for v in (mem, temp, db)) or out["device_count"] is not None
+            out["note"] = self.note
         return out
 
     async def device_ids(self, c: httpx.AsyncClient | None = None) -> list[dict[str, Any]]:
@@ -173,14 +209,14 @@ class Hubitat:
 
     async def reboot(self) -> None:
         async with self._session() as c:
-            r = await c.post(f"{self.base}/hub/reboot")
+            r = await self._admin(c, "POST", "/hub/reboot")
             r.raise_for_status()
 
     async def backup(self, backup_dir: Path, keep: int) -> dict[str, Any]:
         backup_dir.mkdir(parents=True, exist_ok=True)
         async with self._session() as c:
-            c.timeout = httpx.Timeout(180.0)
-            r = await c.get(f"{self.base}/hub/backupDB", params={"fileName": "latest"})
+            r = await self._admin(c, "GET", "/hub/backupDB", params={"fileName": "latest"},
+                                  timeout=httpx.Timeout(180.0, connect=4.0))
             r.raise_for_status()
             if r.headers.get("content-type", "").startswith("text/html"):
                 raise ConnectorError("백업 파일 대신 웹 페이지가 왔습니다 (허브 로그인 설정 확인)")

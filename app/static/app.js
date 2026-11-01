@@ -196,34 +196,265 @@ function actionButton(connId, a, small) {
     data-params="${esc(JSON.stringify(a.params || {}))}" data-label="${esc(a.label)}" ${a.confirm ? `data-confirm="${esc(a.confirm)}"` : ""}>${esc(a.label)}</button>`;
 }
 
-function statusCard(st) {
-  const m = metaOf(st.type) || { title: st.title };
+/* ---------- 상태 카드 ---------- */
+const expandedRows = new Set();   // "연결id:섹션번호" — "더 보기"로 펼친 목록
+
+function rowHtml(connId, r) {
+  const main = `<div class="row-main"><b>${esc(r.name)}</b>${r.note ? `<small>${esc(r.note)}</small>` : ""}</div>
+    ${r.badge ? `<span class="pill ${esc(r.tone)}">${esc(r.badge)}</span>` : ""}`;
+  if (!r.actions.length) return `<div class="row">${main}</div>`;
+  // 작업 버튼은 줄을 눌렀을 때만 펼친다 (카드가 길어지지 않게)
+  return `<details class="row xrow"><summary>${main}<span class="xrow-more" aria-hidden="true">⋯</span></summary>
+    <div class="row-act">${r.actions.map((a) => actionButton(connId, a, true)).join("")}</div></details>`;
+}
+
+/** 상태 카드 안쪽. opts.rows: 목록 줄 수 (0 = 요약만, -1 = 전부) */
+function statusCardInner(st, opts = { rows: -1 }, loading = false) {
+  const m = metaOf(st.type) || { title: st.title || "" };
+  const badge = !st.card && st.online === undefined ? '<span class="badge"><span class="dot"></span>확인 중</span>'
+    : st.online ? '<span class="badge ok"><span class="dot ok"></span>온라인</span>'
+    : `<span class="badge bad" title="${esc(st.error || "")}"><span class="dot bad"></span>오류</span>`;
   const head = `<div class="card-head"><div class="card-title"><span class="type-label">${esc(m.title)}</span><h2>${esc(st.name)}</h2>
       <small>${esc(st.card && st.card.summary ? st.card.summary : shortUrl(st.link))}</small></div>
-    ${st.online ? '<span class="badge ok"><span class="dot ok"></span>온라인</span>'
-      : `<span class="badge bad" title="${esc(st.error || "")}"><span class="dot bad"></span>오류</span>`}</div>`;
+    <span class="head-badges">${loading ? '<span class="spin" title="새로 고치는 중" aria-label="새로 고치는 중"></span>' : ""}${badge}</span></div>`;
   const link = st.link ? `<a class="card-link" href="${esc(st.link)}" target="_blank" rel="noopener noreferrer">웹 화면 열기 ↗</a>` : "";
   if (!st.card) {
-    return `<section class="card">${head}<div class="empty">연결하지 못했습니다: ${esc(st.error || "")}
-      <br><a href="#/settings">연결 설정</a>에서 주소와 토큰을 확인하세요.</div>${link}</section>`;
+    if (st.online === undefined) return `${head}<div class="skeleton-lines" aria-hidden="true"><i></i><i></i><i></i></div>`;
+    return `${head}<div class="empty">연결하지 못했습니다: ${esc(st.error || "")}
+      <br><a href="#/settings">연결 설정</a>에서 주소와 토큰을 확인하세요.</div>${link}`;
   }
   const c = st.card;
   const metrics = c.metrics.length ? `<dl class="metrics">${c.metrics.map((x) => `<div class="metric"><dt>${esc(x.label)}</dt><dd>${esc(x.value)}</dd>
     ${x.pct !== null && x.pct !== undefined ? bar(x.pct) : ""}</div>`).join("")}</dl>` : "";
-  const sections = c.sections.map((s) => `<div class="rows"><span class="rows-title">${esc(s.title)}</span>
-    ${s.rows.map((r) => `<div class="row"><div class="row-main"><b>${esc(r.name)}</b>${r.note ? `<small>${esc(r.note)}</small>` : ""}</div>
-      ${r.badge ? `<span class="pill ${esc(r.tone)}">${esc(r.badge)}</span>` : ""}
-      ${r.actions.length ? `<div class="row-act">${r.actions.map((a) => actionButton(st.id, a, true)).join("")}</div>` : ""}</div>`).join("")
-      || `<div class="empty" style="margin-top:4px">${esc(s.empty || "항목이 없습니다")}</div>`}</div>`).join("");
+  let sections;
+  if (opts.rows === 0) {
+    const counts = c.sections.filter((s) => s.rows.length).map((s) => `${esc(s.title)} ${s.rows.length}개`);
+    sections = counts.length ? `<p class="muted small-line">${counts.join(" · ")}</p>` : "";
+  } else {
+    sections = c.sections.map((s, i) => {
+      const key = `${st.id}:${i}`;
+      const open = opts.rows < 0 || expandedRows.has(key);
+      const shown = open ? s.rows : s.rows.slice(0, opts.rows);
+      const rest = s.rows.length - shown.length;
+      const toggle = rest > 0 ? `<button type="button" class="linklike more-rows" data-expand="${esc(key)}">${rest}개 더 보기</button>`
+        : opts.rows > 0 && expandedRows.has(key) && s.rows.length > opts.rows ? `<button type="button" class="linklike more-rows" data-expand="${esc(key)}">접기</button>` : "";
+      return `<div class="rows"><span class="rows-title">${esc(s.title)}${s.rows.length > 3 ? ` <span class="muted">${s.rows.length}</span>` : ""}</span>
+        ${shown.map((r) => rowHtml(st.id, r)).join("") || `<div class="empty" style="margin-top:4px">${esc(s.empty || "항목이 없습니다")}</div>`}${toggle}</div>`;
+    }).join("");
+  }
   const actions = c.actions.length ? `<div class="actions">${c.actions.map((a) => actionButton(st.id, a, false)).join("")}</div>` : "";
-  return `<section class="card">${head}${c.note ? `<p class="muted" style="margin:0;font-size:13px">${esc(c.note)}</p>` : ""}${metrics}${sections}${actions}${link}</section>`;
+  return `${head}${c.note ? `<p class="muted small-line">${esc(c.note)}</p>` : ""}${metrics}${sections}${actions}${link}`;
 }
 
-/** 상태 카드 화면 공통 (인프라 · 스마트홈 허브) */
-async function statusGrid(category) {
-  const [list] = await Promise.all([api(`/api/status?category=${category}`), loadMeta()]);
-  return list;
+/* ---------- 대시보드 (인프라 · 스마트홈 허브의 상태 카드) ----------
+   카드마다 따로 불러와서 느린 시스템이 있어도 나머지는 바로 보인다. 한 번 받은 상태는 기억해 두고
+   다시 열 때 먼저 보여 준 뒤 새로 고친다. 배치(순서 · 크기 · 줄 수 · 숨김)는 서버에 저장 → 어느 기기에서나 같음. */
+const statusCache = {};
+const DASH = { page: null, category: null, conns: [], layout: null, draft: null, editing: false, loading: new Set(), seq: 0, dragId: null };
+const ROW_CHOICES = [[0, "요약만"], [3, "3줄"], [5, "5줄"], [10, "10줄"], [-1, "전부"]];
+
+const dashLayout = () => (DASH.editing ? DASH.draft : DASH.layout);
+function cardOpts(id) { return { size: "m", rows: 5, hidden: false, ...(dashLayout().cards[id] || {}) }; }
+function orderedConns() {
+  const pos = new Map(dashLayout().order.map((id, i) => [id, i]));
+  return DASH.conns.map((c, i) => [c, pos.has(c.id) ? pos.get(c.id) : 1000 + i]).sort((a, b) => a[1] - b[1]).map((x) => x[0]);
 }
+
+async function dashSetup(page, category) {
+  await loadMeta();
+  const [conns, layout] = await Promise.all([api("/api/connections"), api(`/api/layout/${page}`)]);
+  Object.assign(DASH, { page, category, layout, draft: null, editing: false, seq: DASH.seq + 1, loading: new Set(),
+    conns: conns.filter((c) => c.category === category) });
+}
+
+function dashCardHtml(c) {
+  const o = cardOpts(c.id);
+  if (o.hidden && !DASH.editing) return "";
+  const st = statusCache[c.id] || { id: c.id, type: c.type, name: c.name, link: c.config && c.config.url };
+  const tools = DASH.editing ? `<div class="dash-tools">
+      <span class="grip" title="끌어서 옮기기" aria-hidden="true">⠿</span>
+      <button type="button" class="btn sm" data-dash="left" aria-label="${esc(c.name)} 앞으로">◀</button>
+      <button type="button" class="btn sm" data-dash="right" aria-label="${esc(c.name)} 뒤로">▶</button>
+      <button type="button" class="btn sm" data-dash="size">${o.size === "l" ? "1칸으로" : "2칸으로"}</button>
+      <select class="sm-select" data-dash="rows" aria-label="${esc(c.name)} 목록 줄 수">${ROW_CHOICES.map(([v, t]) => `<option value="${v}" ${v === o.rows ? "selected" : ""}>${t}</option>`).join("")}</select>
+      <button type="button" class="btn sm" data-dash="hide">${o.hidden ? "보이기" : "숨기기"}</button></div>` : "";
+  return `<section class="card dash-card${o.size === "l" ? " wide2" : ""}${o.hidden ? " is-hidden" : ""}" data-cid="${esc(c.id)}"${DASH.editing ? ' draggable="true"' : ""}>
+    ${tools}<div class="dash-body">${statusCardInner({ ...st, name: c.name }, o, DASH.loading.has(c.id))}</div></section>`;
+}
+
+function dashCounts() {
+  const sts = DASH.conns.map((c) => statusCache[c.id]).filter((x) => x && x.online !== undefined);
+  const ok = sts.filter((x) => x.online).length;
+  const waiting = DASH.conns.length - sts.length;
+  return `연결 ${DASH.conns.length}개 · ${ok}개 응답${waiting ? ` · ${waiting}개 확인 중` : ""}`;
+}
+
+function dashButtons() {
+  if (DASH.editing) {
+    return `<div class="chips"><button type="button" class="btn" data-dashmode="reset">기본 배치로</button>
+      <button type="button" class="btn" data-dashmode="cancel">취소</button><button type="button" class="btn primary" data-dashmode="save">완료</button></div>`;
+  }
+  return `<div class="chips"><button type="button" class="btn" data-pick="${DASH.category}">+ 연결 추가</button>
+    <button type="button" class="btn" data-dashmode="edit">대시보드 편집</button><button type="button" class="btn accent" data-dashmode="refresh">새로 고침</button></div>`;
+}
+
+function dashGridHtml() {
+  const hidden = DASH.conns.filter((c) => cardOpts(c.id).hidden).length;
+  return `${DASH.editing ? '<p class="dash-help">카드를 끌어서 옮기거나 ◀ ▶로 순서를 바꾸세요. 2칸으로 넓히고, 목록 줄 수를 정하고, 안 보고 싶은 카드는 숨길 수 있어요.</p>' : ""}
+    <div class="grid dash${DASH.editing ? " editing" : ""}" id="dash-grid">${orderedConns().map(dashCardHtml).join("")}</div>
+    ${!DASH.editing && hidden ? `<p class="muted small-line">숨긴 카드 ${hidden}개 · <button type="button" class="linklike" data-dashmode="edit">대시보드 편집에서 보이기</button></p>` : ""}`;
+}
+
+// 카드마다 높이에 맞는 줄 수 (grid-auto-rows: 2px + 카드 아래 여백 14px)
+const dashFitObs = "ResizeObserver" in window ? new ResizeObserver((entries) => entries.forEach((en) => fitCard(en.target))) : null;
+function fitCard(el) {
+  if (!el.isConnected) { if (dashFitObs) dashFitObs.unobserve(el); return; }
+  el.style.gridRowEnd = `span ${Math.ceil((el.getBoundingClientRect().height + 14) / 2)}`;
+}
+function dashFit() {
+  document.querySelectorAll("#dash-grid > .dash-card").forEach((el) => { fitCard(el); if (dashFitObs) dashFitObs.observe(el); });
+}
+
+function dashPaintAll() {
+  const host = $("#dash-host");
+  if (host) host.innerHTML = dashGridHtml();
+  const head = $("#dash-buttons");
+  if (head) head.innerHTML = dashButtons();
+  const cnt = $("#dash-count");
+  if (cnt) cnt.textContent = dashCounts();
+  dashFit();
+}
+
+function dashPaintCard(id) {
+  const el = document.querySelector(`#dash-grid [data-cid="${CSS.escape(id)}"]`);
+  const c = DASH.conns.find((x) => x.id === id);
+  if (el && c) {
+    // 펼쳐 둔 작업 버튼(details)은 다시 그려도 열린 채로
+    const open = [...el.querySelectorAll("details.xrow")].map((d, i) => (d.open ? i : -1)).filter((i) => i >= 0);
+    el.outerHTML = dashCardHtml(c);
+    const nel = document.querySelector(`#dash-grid [data-cid="${CSS.escape(id)}"]`);
+    if (nel) {
+      const ds = nel.querySelectorAll("details.xrow");
+      open.forEach((i) => { if (ds[i]) ds[i].open = true; });
+    }
+  }
+  const cnt = $("#dash-count");
+  if (cnt) cnt.textContent = dashCounts();
+  dashFit();
+}
+
+/** 카드 상태를 불러온다. ids 를 주면 그 카드만 */
+function dashLoad(ids) {
+  const seq = DASH.seq;
+  for (const c of DASH.conns.filter((x) => !ids || ids.includes(x.id))) {
+    DASH.loading.add(c.id);
+    dashPaintCard(c.id);
+    api(`/api/status/${encodeURIComponent(c.id)}`)
+      .then((st) => { statusCache[c.id] = st; })
+      .catch((err) => { if (!(err instanceof ApiError && err.message === "로그인이 필요합니다")) statusCache[c.id] = { id: c.id, type: c.type, name: c.name, online: false, error: err.message, card: null }; })
+      .finally(() => { if (seq !== DASH.seq) return; DASH.loading.delete(c.id); dashPaintCard(c.id); });
+  }
+}
+
+function dashMove(id, delta) {
+  const order = orderedConns().map((c) => c.id);
+  const i = order.indexOf(id), j = i + delta;
+  if (i < 0 || j < 0 || j >= order.length) return;
+  [order[i], order[j]] = [order[j], order[i]];
+  DASH.draft.order = order;
+  dashPaintAll();
+  const btn = document.querySelector(`#dash-grid [data-cid="${CSS.escape(id)}"] [data-dash="${delta < 0 ? "left" : "right"}"]`);
+  if (btn) btn.focus();
+}
+
+function dashSetCard(id, patch) {
+  DASH.draft.cards[id] = { ...cardOpts(id), ...patch };
+  dashPaintAll();
+}
+
+view.addEventListener("click", async (e) => {
+  const ex = e.target.closest("[data-expand]");
+  if (ex) {
+    const k = ex.dataset.expand;
+    expandedRows.has(k) ? expandedRows.delete(k) : expandedRows.add(k);
+    dashPaintCard(k.slice(0, k.lastIndexOf(":")));
+    return;
+  }
+  const mode = e.target.closest("[data-dashmode]");
+  if (mode) {
+    const m = mode.dataset.dashmode;
+    if (m === "refresh") { dashLoad(); return; }
+    if (m === "edit") {
+      DASH.draft = JSON.parse(JSON.stringify(DASH.layout));
+      DASH.draft.order = orderedConns().map((c) => c.id);
+      DASH.editing = true;
+    } else if (m === "cancel") {
+      DASH.editing = false;
+    } else if (m === "reset") {
+      DASH.draft = { order: [], cards: {} };
+    } else if (m === "save") {
+      try {
+        DASH.layout = await api(`/api/layout/${DASH.page}`, { method: "PUT", body: DASH.draft });
+        DASH.editing = false;
+        toast("배치를 저장했습니다");
+      } catch (err) { toast(err.message, true); return; }
+    }
+    dashPaintAll();
+    return;
+  }
+  const t = e.target.closest("[data-dash]");
+  if (!t || t.tagName === "SELECT") return;
+  const id = t.closest("[data-cid]").dataset.cid;
+  const o = cardOpts(id);
+  if (t.dataset.dash === "left") dashMove(id, -1);
+  else if (t.dataset.dash === "right") dashMove(id, 1);
+  else if (t.dataset.dash === "size") dashSetCard(id, { size: o.size === "l" ? "m" : "l" });
+  else if (t.dataset.dash === "hide") dashSetCard(id, { hidden: !o.hidden });
+});
+
+view.addEventListener("change", (e) => {
+  const t = e.target.closest('select[data-dash="rows"]');
+  if (t) dashSetCard(t.closest("[data-cid]").dataset.cid, { rows: Number(t.value) });
+});
+
+// 끌어서 옮기기 (편집 중일 때만 draggable)
+view.addEventListener("dragstart", (e) => {
+  const card = e.target.closest && e.target.closest("#dash-grid.editing [data-cid]");
+  if (!card) return;
+  DASH.dragId = card.dataset.cid;
+  card.classList.add("dragging");
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", DASH.dragId);
+});
+view.addEventListener("dragover", (e) => {
+  if (!DASH.dragId || !e.target.closest("#dash-grid")) return;
+  e.preventDefault();
+  const over = e.target.closest("[data-cid]");
+  document.querySelectorAll("#dash-grid .drop-before, #dash-grid .drop-after").forEach((x) => x.classList.remove("drop-before", "drop-after"));
+  if (over && over.dataset.cid !== DASH.dragId) {
+    const r = over.getBoundingClientRect();
+    over.classList.add(e.clientX < r.left + r.width / 2 ? "drop-before" : "drop-after");
+  }
+});
+view.addEventListener("drop", (e) => {
+  if (!DASH.dragId) return;
+  e.preventDefault();
+  const over = e.target.closest("[data-cid]");
+  if (over && over.dataset.cid !== DASH.dragId) {
+    const order = orderedConns().map((c) => c.id).filter((x) => x !== DASH.dragId);
+    const r = over.getBoundingClientRect();
+    const at = order.indexOf(over.dataset.cid) + (e.clientX < r.left + r.width / 2 ? 0 : 1);
+    order.splice(at, 0, DASH.dragId);
+    DASH.draft.order = order;
+  }
+  DASH.dragId = null;
+  dashPaintAll();
+});
+view.addEventListener("dragend", () => {
+  if (!DASH.dragId) return;
+  DASH.dragId = null;
+  dashPaintAll();
+});
 
 // 상태 카드의 작업 버튼
 view.addEventListener("click", async (e) => {
@@ -238,7 +469,8 @@ view.addEventListener("click", async (e) => {
       { method: "POST", body: { params: JSON.parse(btn.dataset.params || "{}"), confirm: !!confirmMsg } });
     if (r.text !== undefined) { showText(r.title || label, r.text); return; }
     toast(r.message || "완료했습니다");
-    setTimeout(route, 1000);
+    const cid = btn.dataset.conn;
+    setTimeout(() => (document.querySelector(`#dash-grid [data-cid="${CSS.escape(cid)}"]`) ? dashLoad([cid]) : route()), 1000);
   } catch (err) {
     toast(err.message, true);
   } finally {
@@ -248,14 +480,16 @@ view.addEventListener("click", async (e) => {
 
 /* ---------- 인프라 ---------- */
 async function renderInfra() {
-  const list = await statusGrid("infra");
+  await dashSetup("infra", "infra");
   const types = META.filter((m) => m.category === "infra");
-  view.innerHTML = list.length ? `
-    <header class="page-head"><div><h1>인프라</h1><p>연결 ${list.length}개 · ${list.filter((x) => x.online).length}개 응답</p></div>
-      <div class="chips"><button class="btn" data-pick="infra">+ 연결 추가</button><button class="btn accent" data-refresh>새로 고침</button></div></header>
-    <div class="grid wide">${list.map(statusCard).join("")}</div>`
-    : `<header class="page-head"><div><h1>인프라</h1><p>아직 연결한 인프라가 없어요.</p></div></header>
-    ${emptyStart("인프라 연결하기", "쓰는 것만 골라 연결하면 이 화면에 나타납니다.", types)}`;
+  if (!DASH.conns.length) {
+    view.innerHTML = `<header class="page-head"><div><h1>인프라</h1><p>아직 연결한 인프라가 없어요.</p></div></header>
+      ${emptyStart("인프라 연결하기", "쓰는 것만 골라 연결하면 이 화면에 나타납니다.", types)}`;
+    return;
+  }
+  view.innerHTML = `<header class="page-head"><div><h1>인프라</h1><p id="dash-count">${dashCounts()}</p></div><div id="dash-buttons">${dashButtons()}</div></header>
+    <div id="dash-host" class="dash-host">${dashGridHtml()}</div>`;
+  dashLoad();
 }
 
 view.addEventListener("click", (e) => {
@@ -269,16 +503,15 @@ const PLATFORM_OPTIONS = ["HomeKit", "Google Home", "SmartThings", "Aqara", "Hom
 let pingCache = {};
 
 async function renderHubs() {
-  const [list, devices, platforms, backups] = await Promise.all([
-    statusGrid("smarthome"), api("/api/registry/devices"), api("/api/registry/platforms"), api("/api/hub-backups"),
+  const [, devices, platforms, backups] = await Promise.all([
+    dashSetup("hubs", "smarthome"), api("/api/registry/devices"), api("/api/registry/platforms"), api("/api/hub-backups"),
   ]);
   const types = META.filter((m) => m.category === "smarthome");
-  const online = list.filter((x) => x.online).length;
+  const list = DASH.conns;
   view.innerHTML = `
-    <header class="page-head"><div><h1>스마트홈 허브</h1><p>API로 관리하는 허브와, 연동은 안 되지만 역할을 기록해 두는 기기</p></div>
-      ${list.length ? '<div class="chips"><button class="btn" data-pick="smarthome">+ 연결 추가</button><button class="btn accent" data-refresh>새로 고침</button></div>' : ""}</header>
-    ${list.length ? `<section class="section"><div class="section-head"><h2>허브 상태</h2><span class="muted" style="font-size:13px">${list.length}개 중 ${online}개 응답</span></div>
-      <div class="grid wide">${list.map(statusCard).join("")}</div>
+    <header class="page-head"><div><h1>스마트홈 허브</h1><p>API로 관리하는 허브와, 연동은 안 되지만 역할을 기록해 두는 기기</p></div></header>
+    ${list.length ? `<section class="section"><div class="section-head"><div><h2>허브 상태</h2><p id="dash-count">${dashCounts()}</p></div><div id="dash-buttons">${dashButtons()}</div></div>
+      <div id="dash-host" class="dash-host">${dashGridHtml()}</div>
       ${backups.length ? `<details class="card"><summary style="cursor:pointer;font-size:14px">Hubitat 백업 파일 ${backups.length}개</summary>
         <div class="rows">${backups.map((b) => `<div class="row"><div class="row-main"><b class="mono">${esc(b.file)}</b><small>${(b.size / 1048576).toFixed(1)} MB · ${new Date(b.mtime * 1000).toLocaleString("ko-KR")}</small></div>
         <a class="btn sm" style="display:inline-flex;align-items:center;text-decoration:none" href="/api/hub-backups/${encodeURIComponent(b.file)}" download>받기</a></div>`).join("")}</div></details>` : ""}
@@ -297,6 +530,7 @@ async function renderHubs() {
     </section>`;
   view._devices = devices;
   view._platforms = platforms;
+  if (list.length) dashLoad();
 }
 
 function manualCard(d) {

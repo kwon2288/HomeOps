@@ -1,11 +1,11 @@
 """연결 관리와 공통 상태 · 작업 API. 어떤 연동이든 같은 경로로 다룬다."""
 import asyncio
 import re
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from .. import integrations
 from ..auth import require_user
@@ -188,6 +188,52 @@ async def status(request: Request, category: str | None = None) -> list[dict]:
     if category not in (None, "infra", "smarthome"):
         raise HTTPException(400, "category 는 infra 또는 smarthome")
     return await statuses(request, category)
+
+
+@router.get("/status/{conn_id}")
+async def status_one(conn_id: str, request: Request) -> dict:
+    """연결 하나의 상태. 화면은 카드마다 따로 불러서, 느린 시스템이 있어도 나머지는 바로 보인다."""
+    conn = ctx(request).settings.conn(conn_id)
+    if not conn:
+        raise HTTPException(404, "연결이 없습니다")
+    return await _status_one(request, conn)
+
+
+# ---- 대시보드 배치 (화면별 카드 순서 · 크기 · 표시 줄 수 · 숨김) ----
+
+LAYOUT_PAGES = ("infra", "hubs")
+
+
+class CardLayout(BaseModel):
+    size: Literal["m", "l"] = "m"          # m = 1칸, l = 2칸
+    rows: Literal[0, 3, 5, 10, -1] = 5     # 목록 줄 수 (0 = 요약만, -1 = 전부)
+    hidden: bool = False
+
+
+class Layout(BaseModel):
+    order: list[str] = Field(default_factory=list, max_length=300)
+    cards: dict[str, CardLayout] = Field(default_factory=dict, max_length=300)
+
+
+def _layout_key(page: str) -> str:
+    if page not in LAYOUT_PAGES:
+        raise HTTPException(404, "없는 화면입니다")
+    return f"layout:{page}"
+
+
+@router.get("/layout/{page}")
+def get_layout(page: str, request: Request) -> dict:
+    raw = ctx(request).db.kv_get(_layout_key(page))
+    try:
+        return Layout.model_validate_json(raw).model_dump() if raw else Layout().model_dump()
+    except ValidationError:
+        return Layout().model_dump()
+
+
+@router.put("/layout/{page}")
+def put_layout(page: str, body: Layout, request: Request) -> dict:
+    ctx(request).db.kv_set(_layout_key(page), body.model_dump_json())
+    return body.model_dump()
 
 
 @router.post("/connections/{conn_id}/actions/{action}")

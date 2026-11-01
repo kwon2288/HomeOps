@@ -242,17 +242,59 @@ def test_hubitat_unreachable_says_why(runtime):
 
 @respx.mock
 def test_hubitat_with_hub_login(runtime):
-    """허브 로그인을 켠 허브: 로그인 후 같은 연결로 관리 URL 호출 (예전에는 연결 재사용 오류)."""
+    """허브 로그인: 허브가 로그인 화면을 돌려줄 때만 로그인하고 다시 시도."""
+    page = '<html><form action="/login"><input type="password" name="password"></form></html>'
+    state = {"in": False}
     respx.get("http://hub.test/hub2/hubData").mock(return_value=httpx.Response(200, json={"firmwareVersionString": "2.4.3"}))
-    login = respx.post("http://hub.test/login").mock(return_value=httpx.Response(200))
-    respx.get(url__regex=r"http://hub\.test/hub/advanced/.*").mock(return_value=httpx.Response(200, text="512000"))
-    reboot = respx.post("http://hub.test/hub/reboot").mock(return_value=httpx.Response(200))
+    respx.get("http://hub.test/login").mock(return_value=httpx.Response(200, html=page))
+
+    def do_login(request):
+        state["in"] = b"password=pw" in request.content
+        return httpx.Response(302, headers={"Location": "/" if state["in"] else "/login"})
+    login = respx.post("http://hub.test/login").mock(side_effect=do_login)
+    respx.get("http://hub.test/").mock(return_value=httpx.Response(200, html="<html>home</html>"))
+
+    def admin(request):
+        return httpx.Response(200, text="512000") if state["in"] else httpx.Response(302, headers={"Location": "/login"})
+    respx.get(url__regex=r"http://hub\.test/hub/advanced/.*").mock(side_effect=admin)
+    reboot = respx.post("http://hub.test/hub/reboot").mock(side_effect=lambda r: httpx.Response(200) if state["in"]
+                                                         else httpx.Response(302, headers={"Location": "/login"}))
     hub = conn("hubitat", "main", url="http://hub.test", login_user="admin", login_password="pw")
     c = make_client(Settings(connections=[hub]), runtime)
     st = c.get("/api/status").json()[0]
-    assert st["online"], st
+    assert st["online"] and not st["card"]["note"], st
+    assert login.call_count == 1           # 동시에 세 요청이 막혀도 로그인은 한 번
+    state["in"] = False
     assert c.post("/api/connections/main/actions/reboot", json={"confirm": True}).status_code == 200
-    assert login.call_count == 2 and reboot.call_count == 1
+    assert reboot.call_count == 2
+
+    # 비밀번호가 틀리면 원인을 알려 줌
+    bad = conn("hubitat", "main", url="http://hub.test", login_user="admin", login_password="nope")
+    state["in"] = False
+    c = make_client(Settings(connections=[bad]), runtime)
+    r = c.post("/api/connections/test", json={"id": "main", "config": {"url": "http://hub.test", "login_user": "admin"}}).json()
+    assert r["ok"] is False and "아이디와 비밀번호" in r["message"]
+
+
+@respx.mock
+def test_hubitat_login_hang_does_not_break_maker_api(runtime):
+    """로그인 보안이 꺼져 있으면 로그인하지 않고, 로그인이 멈춰도 Maker API 정보는 보여 준다."""
+    api = "http://hub.test/apps/api/7"
+    respx.get("http://hub.test/hub2/hubData").mock(return_value=httpx.Response(200, json={}))
+    respx.get(f"{api}/devices").mock(return_value=httpx.Response(200, json=[{"id": "1"}]))
+    login = respx.post("http://hub.test/login").mock(side_effect=httpx.ReadTimeout("hang"))
+    respx.get("http://hub.test/login").mock(return_value=httpx.Response(200, html="<html></html>"))
+    adv = respx.get(url__regex=r"http://hub\.test/hub/advanced/.*").mock(return_value=httpx.Response(200, text="100"))
+    hub = conn("hubitat", "main", url="http://hub.test", app_id=7, token="t", login_user="admin", login_password="pw")
+    c = make_client(Settings(connections=[hub]), runtime)
+    assert c.get("/api/status").json()[0]["online"]
+    assert login.call_count == 0            # 로그인 화면이 안 오면 로그인하지 않음
+
+    adv.mock(return_value=httpx.Response(302, headers={"Location": "/login"}))
+    st = c.get("/api/status").json()[0]
+    assert st["online"] and "POST /login" in st["card"]["note"]
+    r = c.post("/api/connections/test", json={"id": "main", "config": {"url": "http://hub.test", "app_id": 7, "login_user": "admin"}}).json()
+    assert r["ok"] and "Maker API 기기 1개" in r["message"] and "POST /login" in r["message"]
 
 
 @respx.mock

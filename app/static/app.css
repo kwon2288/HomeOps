@@ -249,3 +249,47 @@ details.fold > summary small { color: var(--faint); font-size: 13px; }
 .login-card input { min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--btn-line); background: var(--bg); color: var(--text); font-size: 16px; }
 .login-card .btn { min-height: 44px; font-size: 15px; }
 .err { margin: 0; min-height: 18px; color: var(--bad-ink); font-size: 13px; }
+
+/* ---------- 대시보드 ---------- */
+.dash-host { container-type: inline-size; display: flex; flex-direction: column; gap: 12px; }
+/* 카드 높이에 맞춰 줄 수를 정해서(벽돌 쌓기) 짧은 카드 아래에 빈 칸이 생기지 않게 */
+.grid.dash { grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); grid-auto-flow: row dense; grid-auto-rows: 2px; row-gap: 0; align-items: start; }
+.grid.dash > .dash-card { margin-bottom: 14px; }
+.dash-card.wide2 .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+@container (max-width: 720px) { .dash-card.wide2 .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.dash-card.wide2 { grid-column: span 2; }
+@container (max-width: 720px) { .dash-card.wide2 { grid-column: auto; } }
+.dash-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.head-badges { display: inline-flex; align-items: center; gap: 8px; flex: none; }
+.small-line { margin: 0; font-size: 13px; }
+.more-rows { align-self: flex-start; margin-top: 6px; font-size: 13px; color: var(--accent-ink); }
+
+/* 작업 버튼은 줄을 눌러야 펼쳐짐 */
+details.xrow { display: block; padding: 0; }
+details.xrow > summary { list-style: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-height: 52px; padding: 8px 0; cursor: pointer; }
+details.xrow > summary::-webkit-details-marker { display: none; }
+details.xrow > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+.xrow-more { flex: none; width: 28px; text-align: center; color: var(--faint); font-size: 16px; }
+details.xrow[open] > summary .xrow-more { color: var(--text); }
+details.xrow > .row-act { justify-content: flex-start; padding: 0 0 10px; }
+
+/* 불러오는 중 */
+.skeleton-lines { display: flex; flex-direction: column; gap: 8px; }
+.skeleton-lines i { display: block; height: 44px; border-radius: 10px; background: var(--raise); animation: pulse 1.4s ease-in-out infinite; }
+.skeleton-lines i:last-child { width: 60%; height: 14px; }
+@keyframes pulse { 50% { opacity: .45; } }
+.spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .skeleton-lines i, .spin { animation: none; } }
+
+/* 편집 모드 */
+.dash-help { margin: 0; font-size: 13px; color: var(--muted); }
+.grid.dash.editing .dash-card { border-style: dashed; border-color: var(--btn-line); cursor: grab; }
+.grid.dash.editing .dash-body { pointer-events: none; opacity: .55; max-height: 340px; overflow: hidden; }
+.dash-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-bottom: 10px; border-bottom: 1px solid var(--line-soft); }
+.dash-tools .grip { font-size: 18px; color: var(--faint); padding: 0 4px; cursor: grab; }
+.sm-select { min-height: 32px; padding: 0 8px; border-radius: 8px; background: var(--raise); color: var(--text); border: 1px solid var(--btn-line); font: inherit; font-size: 13px; }
+.dash-card.is-hidden { opacity: .45; }
+.dash-card.dragging { opacity: .3; }
+.dash-card.drop-before { box-shadow: -4px 0 0 var(--accent); }
+.dash-card.drop-after { box-shadow: 4px 0 0 var(--accent); }

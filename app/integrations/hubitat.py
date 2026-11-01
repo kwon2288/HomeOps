@@ -40,11 +40,12 @@ class HubitatHub(Integration):
     async def status(self) -> dict:
         st = await self._hub().status()
         if not st["online"]:
-            raise ConnectorError("응답 없음 (주소 · Maker API · 허브 로그인 확인)")
+            raise ConnectorError(st.get("note") or "응답 없음 (주소 · Maker API · 허브 로그인 확인)")
         mem = st["free_memory_kb"]
         parts = [p for p in (self.cfg.get("role"), f"펌웨어 {st['firmware']}" if st["firmware"] else "") if p]
         return card(
             summary=" · ".join(parts),
+            note=f"메모리·온도 등은 못 읽음: {st['note']}" if st.get("note") else None,
             metrics=[
                 metric("기기", st["device_count"]),
                 metric("여유 메모리", round(mem / 1024) if mem is not None else None, unit=" MB"),
@@ -70,9 +71,9 @@ class HubitatHub(Integration):
         if st["free_memory_kb"] is not None or st["temperature_c"] is not None:
             parts.append("허브 관리 정보 확인됨" + (f" · 펌웨어 {st['firmware']}" if st["firmware"] else ""))
         elif not self.cfg.get("app_id"):
-            raise ConnectorError("허브에 연결하지 못했습니다 (주소 또는 허브 로그인 확인)")
+            raise ConnectorError(st.get("note") or "허브 관리 정보를 읽지 못했습니다 (허브 로그인 설정 확인)")
         else:
-            parts.append("메모리·온도 등 관리 정보는 읽지 못함 (허브 로그인 설정 확인)")
+            parts.append(f"메모리·온도 등 관리 정보는 읽지 못함 ({st.get('note') or '허브 로그인 설정 확인'})")
         return "연결됨 · " + " · ".join(parts)
 
     async def action(self, action: str, params: dict):
