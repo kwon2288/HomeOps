@@ -1,4 +1,4 @@
-"""SQLite 저장소: 수동 등록 기기, 플랫폼 역할, 연동 경로, 작업 기록."""
+"""SQLite 저장소: 수동 등록 기기, 플랫폼 역할, 연동 경로, 작업 기록, 설정(kv)."""
 from __future__ import annotations
 
 import json
@@ -36,6 +36,10 @@ CREATE TABLE IF NOT EXISTS integration_paths (
     dst TEXT NOT NULL,
     check_ref TEXT NOT NULL DEFAULT '',
     sort INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS kv (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -129,6 +133,18 @@ class Database:
         with self._lock, self._conn() as c:
             cur = c.execute(f"DELETE FROM {table} WHERE id = ?", (row_id,))
         return cur.rowcount > 0
+
+    def kv_get(self, key: str) -> str | None:
+        with self._conn() as c:
+            r = c.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
+        return r["value"] if r else None
+
+    def kv_set(self, key: str, value: str) -> None:
+        with self._lock, self._conn() as c:
+            c.execute(
+                "INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
 
     def audit(self, action: str, target: str, result: str) -> None:
         ts = datetime.now(timezone.utc).isoformat(timespec="seconds")

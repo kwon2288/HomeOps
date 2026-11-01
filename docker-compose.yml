@@ -4,9 +4,11 @@ services:
     image: homeops:latest
     container_name: homeops
     restart: unless-stopped
-    env_file: .env
     ports:
       - "8080:8080"
     volumes:
-      - ./config:/app/config:ro
-      - ./data:/app/data
+      - ./data:/app/data   # DB, 암호화 키, Hubitat 백업 파일
+    # 아래는 모두 선택 사항입니다. 계정과 연결 정보는 웹 화면에서 입력하세요.
+    # environment:
+    #   HOMEOPS_COOKIE_SECURE: "auto"   # auto | true | false (auto: HTTPS로 접속하면 Secure 쿠키)
+    #   HOMEOPS_BACKUP_KEEP: "10"       # Hubitat 백업 파일 보관 개수 (허브별)

@@ -31,7 +31,7 @@ def test_login_lockout(runtime):
 
 
 def test_login_ok(client):
-    assert client.get("/api/auth/me").json() == {"user": "admin"}
+    assert client.get("/api/auth/me").json()["user"] == "admin"
 
 
 # ---- 수동 등록 · 플랫폼 · 경로 ----

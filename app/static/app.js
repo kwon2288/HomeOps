@@ -30,7 +30,7 @@ async function api(path, opts = {}) {
     init.body = JSON.stringify(opts.body);
   }
   const res = await fetch(path, init);
-  if (res.status === 401) { showLogin(); throw new ApiError("로그인이 필요합니다"); }
+  if (res.status === 401 && !path.startsWith("/api/auth/")) { showLogin(); throw new ApiError("로그인이 필요합니다"); }
   let data = null;
   try { data = await res.json(); } catch (_) { /* 본문 없음 */ }
   if (!res.ok) {
@@ -124,9 +124,40 @@ function statusBadge(sys, okLabel = "온라인") {
 /* ---------- 로그인 ---------- */
 function showLogin() {
   $("#app").hidden = true;
+  $("#setup").hidden = true;
   $("#login").hidden = false;
   $("#login-form").username.focus();
 }
+
+function showSetup() {
+  $("#app").hidden = true;
+  $("#login").hidden = true;
+  $("#setup").hidden = false;
+  $("#setup-form").password.focus();
+}
+
+function showApp() {
+  $("#login").hidden = true;
+  $("#setup").hidden = true;
+  $("#app").hidden = false;
+}
+
+$("#setup-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  $("#setup-err").textContent = "";
+  if (f.password.value !== f.password2.value) { $("#setup-err").textContent = "비밀번호 확인이 일치하지 않습니다"; return; }
+  try {
+    await api("/api/auth/setup", { method: "POST", body: { username: f.username.value.trim(), password: f.password.value } });
+    f.password.value = ""; f.password2.value = "";
+    showApp();
+    location.hash = "#/settings";
+    route();
+    toast("계정을 만들었습니다. 이제 허브와 서버를 연결하세요");
+  } catch (err) {
+    $("#setup-err").textContent = err.message;
+  }
+});
 
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -135,8 +166,7 @@ $("#login-form").addEventListener("submit", async (e) => {
   try {
     await api("/api/auth/login", { method: "POST", body: { username: f.username.value, password: f.password.value } });
     f.password.value = "";
-    $("#login").hidden = true;
-    $("#app").hidden = false;
+    showApp();
     route();
   } catch (err) {
     $("#login-err").textContent = err.message;
@@ -160,7 +190,7 @@ async function renderInfra() {
 function notConfigured(name, how) {
   return `<section class="card"><div class="card-head"><div class="card-title"><h2>${esc(name)}</h2></div>
     <span class="badge"><span class="dot"></span>연결 전</span></div>
-    <div class="howto"><b>연결 방법</b>${how}</div></section>`;
+    <div class="howto"><b class="howto-title">연결 방법</b>${how}</div></section>`;
 }
 
 function errorPanel(name, sys) {
@@ -169,7 +199,7 @@ function errorPanel(name, sys) {
 }
 
 function nasPanel(sys) {
-  if (!sys.configured) return notConfigured("Synology NAS", "config.yaml 의 <code>synology</code> 에 DSM 주소와 2단계 인증이 없는 전용 계정을 넣으세요.");
+  if (!sys.configured) return notConfigured("Synology NAS", "DSM 주소와 2단계 인증이 없는 전용 계정을 <a href=\"#/settings\">연결 설정</a>에서 입력하세요.");
   if (!sys.online) return errorPanel("Synology NAS", sys);
   const n = sys.data;
   const vol = n.volumes[0] || {};
@@ -192,7 +222,7 @@ function nasPanel(sys) {
 }
 
 function pvePanel(sys) {
-  if (!sys.configured) return notConfigured("Proxmox VE", "Datacenter → 권한 → API 토큰을 만들고 config.yaml 의 <code>proxmox</code> 에 토큰 ID와 Secret을 넣으세요.");
+  if (!sys.configured) return notConfigured("Proxmox VE", "Datacenter → Permissions → API Tokens 에서 토큰을 만들고 <a href=\"#/settings\">연결 설정</a>에서 입력하세요.");
   if (!sys.online) return errorPanel("Proxmox VE", sys);
   const p = sys.data;
   const node = p.nodes[0] || {};
@@ -218,7 +248,7 @@ function pvePanel(sys) {
 }
 
 function ptnPanel(sys) {
-  if (!sys.configured) return notConfigured("Portainer", "Portainer → 내 계정 → Access tokens 에서 토큰을 만들고 config.yaml 의 <code>portainer</code> 에 넣으세요.");
+  if (!sys.configured) return notConfigured("Portainer", "My account → Access tokens 에서 토큰을 만들고 <a href=\"#/settings\">연결 설정</a>에서 입력하세요.");
   if (!sys.online) return errorPanel("Portainer", sys);
   const p = sys.data;
   const rows = p.containers.map((c) => {
@@ -256,12 +286,12 @@ async function renderHubs() {
     api("/api/hubs"), api("/api/registry/devices"), api("/api/registry/platforms"), api("/api/hubs/hubitat/backups"),
   ]);
   const cards = [
-    ...hubs.hubitat.map(hubitatCard),
+    ...(hubs.hubitat.length ? hubs.hubitat.map(hubitatCard) : ['<article class="card"><div class="card-head"><div class="card-title"><b>Hubitat</b></div><span class="badge"><span class="dot"></span>연결 전</span></div><div class="howto"><b class="howto-title">연결 방법</b>허브마다 Maker API 앱을 설치하고 <a href="#/settings">연결 설정</a>에서 허브를 추가하세요.</div></article>']),
     haCard(hubs.home_assistant),
     hbCard(hubs.homebridge),
   ].join("");
   const online = hubs.hubitat.filter((h) => h.online).length + (hubs.home_assistant.online ? 1 : 0) + (hubs.homebridge.online ? 1 : 0);
-  const total = hubs.hubitat.length + 2;
+  const total = hubs.hubitat.length + (hubs.home_assistant.configured ? 1 : 0) + (hubs.homebridge.configured ? 1 : 0);
   view.innerHTML = `
     <header class="page-head"><div><h1>스마트홈 허브</h1><p>API로 관리하는 허브와, 연동은 안 되지만 역할을 기록해 두는 기기</p></div>
       <button class="btn accent" data-refresh>새로 고침</button></header>
@@ -302,7 +332,7 @@ function haCard(sys) {
     ${sys.configured ? `<dl class="kv"><div><dt>Core</dt><dd>${dash(d.version)}</dd></div><div><dt>엔티티</dt><dd>${dash(d.entity_count)}</dd></div>
     <div><dt>업데이트</dt><dd>${dash(d.update_count)}</dd></div><div><dt>상태</dt><dd>${sys.online ? "정상" : esc(sys.error)}</dd></div></dl>
     <div class="actions"><button class="btn" data-act="ha-backup">백업</button><button class="btn danger" data-act="ha-restart">재시작</button></div>`
-    : '<div class="howto"><b>연결 방법</b>프로필 → 보안 → 장기 액세스 토큰을 만들어 config.yaml 의 <code>home_assistant</code> 에 넣으세요.</div>'}</article>`;
+    : '<div class="howto"><b class="howto-title">연결 방법</b>프로필 → 보안 → 장기 액세스 토큰을 만들어 <a href="#/settings">연결 설정</a>에서 입력하세요.</div>'}</article>`;
 }
 
 function hbCard(sys) {
@@ -311,7 +341,7 @@ function hbCard(sys) {
     ${sys.configured ? `<dl class="kv"><div><dt>버전</dt><dd>${dash(d.version)}</dd></div><div><dt>플러그인</dt><dd>${dash(d.plugin_count)}</dd></div>
     <div><dt>액세서리</dt><dd>${d.insecure_mode ? dash(d.accessory_count) : "insecure 모드 필요"}</dd></div><div><dt>상태</dt><dd>${sys.online ? (d.running ? "실행 중" : "정지") : esc(sys.error)}</dd></div></dl>
     <div class="actions"><button class="btn danger" data-act="hb-restart">재시작</button></div>`
-    : '<div class="howto"><b>연결 방법</b>Homebridge UI 계정을 config.yaml 의 <code>homebridge</code> 에 넣으세요. 액세서리 목록은 insecure 모드(-I)에서만 보입니다.</div>'}</article>`;
+    : '<div class="howto"><b class="howto-title">연결 방법</b>Homebridge UI 계정을 <a href="#/settings">연결 설정</a>에서 입력하세요. 액세서리 목록은 insecure 모드(-I)에서만 보입니다.</div>'}</article>`;
 }
 
 function manualCard(d) {
@@ -398,7 +428,7 @@ function drawIntegration() {
       <section class="section grow"><div class="section-head"><h2>기기 제어</h2>
         <div class="filters" role="group" aria-label="방 필터">${rooms.map((r) => `<button type="button" data-room="${esc(r)}" aria-pressed="${r === roomFilter}">${esc(r)}</button>`).join("")}</div></div>
         <div class="legend"><span><span class="src HE">HE</span>Hubitat</span><span><span class="src HA">HA</span>Home Assistant</span><span><span class="src HB">HB</span>Homebridge → HomeKit 노출</span></div>
-        <div class="list">${shown.map(deviceRow).join("") || '<div class="empty" style="border:none">표시할 기기가 없습니다. Hubitat Maker API나 Home Assistant를 연결하세요.</div>'}</div>
+        <div class="list">${shown.map(deviceRow).join("") || '<div class="empty" style="border:none">표시할 기기가 없습니다. <a href="#/settings">연결 설정</a>에서 Hubitat Maker API나 Home Assistant를 연결하세요.</div>'}</div>
         <span class="muted" style="font-size:12px">표시 ${shown.length}개 · 전체 ${d.devices.length}개</span>
       </section>
       <aside class="rail" aria-labelledby="al-h"><h2 id="al-h" style="margin:0;font-size:17px">확인 필요</h2>
@@ -424,6 +454,295 @@ async function renderLog() {
     <tbody>${rows.map((r) => `<tr><td class="mono">${esc(new Date(r.ts).toLocaleString("ko-KR"))}</td><td>${esc(r.action)}</td><td class="mono">${esc(r.target)}</td>
     <td><span class="pill ${r.result === "성공" ? "ok" : "warn"}">${esc(r.result)}</span></td></tr>`).join("") || '<tr><td colspan="4">기록이 없습니다</td></tr>'}</tbody></table></div>`;
 }
+
+/* ---------- 연결 설정 ---------- */
+const MASK = "__SET__";
+
+const SECTION_DEFS = [
+  {
+    key: "home_assistant", group: "hub", title: "Home Assistant", sub: "REST API · 장기 액세스 토큰",
+    help: "HA 프로필 → 보안 → <b>장기 액세스 토큰</b>을 만들어 붙여 넣으세요. 백업은 HA OS(Supervisor) 백업을 씁니다.",
+    fields: [
+      { name: "url", label: "주소", ph: "http://192.168.0.x:8123", full: true },
+      { name: "token", label: "장기 액세스 토큰", secret: true, full: true },
+      { name: "verify_ssl", label: "HTTPS 인증서 검증", type: "bool", def: true },
+    ],
+  },
+  {
+    key: "homebridge", group: "hub", title: "Homebridge", sub: "config-ui-x 로그인",
+    help: "Homebridge UI에 로그인하는 계정입니다. HomeKit 노출 배지와 액세서리 수는 Homebridge를 <b>insecure 모드(-I)</b>로 실행해야 보입니다.",
+    fields: [
+      { name: "url", label: "주소", ph: "http://192.168.0.x:8581", full: true },
+      { name: "username", label: "아이디", ph: "admin" },
+      { name: "password", label: "비밀번호", secret: true },
+      { name: "verify_ssl", label: "HTTPS 인증서 검증", type: "bool", def: true },
+    ],
+  },
+  {
+    key: "synology", group: "infra", title: "Synology NAS", sub: "DSM Web API",
+    help: "2단계 인증을 끈 <b>HomeOps 전용 계정</b>을 만들어 쓰세요. 재부팅·스토리지 조회에는 관리자 그룹 권한이 필요합니다.",
+    fields: [
+      { name: "url", label: "주소", ph: "https://192.168.0.x:5001", full: true },
+      { name: "username", label: "아이디", ph: "homeops" },
+      { name: "password", label: "비밀번호", secret: true },
+      { name: "verify_ssl", label: "HTTPS 인증서 검증 (자체 서명 인증서면 끄기)", type: "bool", def: false },
+    ],
+  },
+  {
+    key: "proxmox", group: "infra", title: "Proxmox VE", sub: "API 토큰",
+    help: "Datacenter → Permissions → <b>API Tokens</b>에서 만든 토큰입니다. 토큰 ID는 <code>사용자@realm!토큰이름</code> 형식이에요. 권장 권한: VM.Audit, VM.PowerMgmt, VM.Snapshot, VM.Backup, Datastore.Audit, Datastore.AllocateSpace, Sys.Audit",
+    fields: [
+      { name: "url", label: "주소", ph: "https://192.168.0.x:8006", full: true },
+      { name: "token_id", label: "토큰 ID", ph: "homeops@pve!dashboard" },
+      { name: "token_secret", label: "토큰 Secret", secret: true },
+      { name: "backup_storage", label: "백업 저장소", ph: "local", def: "local" },
+      { name: "verify_ssl", label: "HTTPS 인증서 검증 (자체 서명 인증서면 끄기)", type: "bool", def: false },
+    ],
+  },
+  {
+    key: "portainer", group: "infra", title: "Portainer", sub: "Access Token",
+    help: "Portainer → My account → <b>Access tokens</b>에서 만든 토큰입니다.",
+    fields: [
+      { name: "url", label: "주소", ph: "https://192.168.0.x:9443", full: true },
+      { name: "api_key", label: "Access Token", secret: true, full: true },
+      { name: "verify_ssl", label: "HTTPS 인증서 검증 (자체 서명 인증서면 끄기)", type: "bool", def: false },
+    ],
+  },
+];
+
+function inputHtml(f, value, idPrefix) {
+  const id = `${idPrefix}-${f.name}`;
+  if (f.type === "bool") {
+    const on = value === undefined || value === null ? f.def : value;
+    return `<label class="field full" style="flex-direction:row;align-items:center;gap:10px;color:var(--text)"><input type="checkbox" name="${f.name}" ${on ? "checked" : ""} style="width:20px;height:20px;accent-color:var(--accent)">${esc(f.label)}</label>`;
+  }
+  const isSet = f.secret && value === MASK;
+  const v = f.secret ? "" : (value ?? f.def ?? "");
+  const ph = isSet ? "저장됨 · 바꿀 때만 입력" : (f.ph || "");
+  return `<label class="field${f.full ? " full" : ""}" for="${id}"><span class="field-label">${esc(f.label)}${isSet ? ' <span class="badge ok">저장됨</span>' : ""}</span>
+    <input id="${id}" name="${f.name}" ${f.secret ? 'type="password" autocomplete="new-password"' : 'autocomplete="off"'} ${f.type === "number" ? 'inputmode="numeric"' : ""} value="${esc(v)}" placeholder="${esc(ph)}"></label>`;
+}
+
+function readForm(form, fields) {
+  const out = {};
+  for (const f of fields) {
+    const el = form.elements[f.name];
+    if (f.type === "bool") out[f.name] = el.checked;
+    else out[f.name] = el.value.trim();
+  }
+  return out;
+}
+
+function sectionCard(def, value) {
+  const configured = value !== null && value !== undefined;
+  return `<form class="card" data-section="${def.key}" novalidate>
+    <div class="card-head"><div class="card-title"><h2>${esc(def.title)}</h2><small>${esc(def.sub)}</small></div>
+      ${configured ? '<span class="badge ok"><span class="dot ok"></span>저장됨</span>' : '<span class="badge"><span class="dot"></span>연결 전</span>'}</div>
+    <div class="howto">${def.help}</div>
+    <div class="form-grid">${def.fields.map((f) => inputHtml(f, configured ? value[f.name] : undefined, def.key)).join("")}</div>
+    <p class="test-result" role="status" aria-live="polite"></p>
+    <div class="actions">
+      <button type="button" class="btn" data-sact="test">연결 테스트</button>
+      <button type="button" class="btn primary" data-sact="save">저장</button>
+      ${configured ? '<button type="button" class="btn danger" data-sact="remove">연결 해제</button>' : ""}
+    </div></form>`;
+}
+
+const HUB_FIELDS = [
+  { name: "name", label: "이름", ph: "Hubitat Main" },
+  { name: "id", label: "ID (영문 소문자)", ph: "main" },
+  { name: "role", label: "역할", ph: "예: Zigbee 전용" },
+  { name: "url", label: "허브 주소", ph: "http://192.168.0.80" },
+  { name: "app_id", label: "Maker API App ID", ph: "예: 12", type: "number" },
+  { name: "token", label: "Maker API Access Token", secret: true },
+  { name: "login_user", label: "허브 로그인 아이디 (로그인 보안을 켠 경우만)", ph: "비워 두면 사용 안 함" },
+  { name: "login_password", label: "허브 로그인 비밀번호", secret: true },
+];
+
+function hubForm(h, i) {
+  const v = {
+    name: h.name, id: h.id, role: h.role, url: h.url,
+    app_id: h.maker_api ? h.maker_api.app_id : "", token: h.maker_api ? h.maker_api.token : "",
+    login_user: h.login ? h.login.username : "", login_password: h.login ? h.login.password : "",
+  };
+  const isNew = !h.orig_id;
+  return `<form class="card" data-hub="${i}" novalidate>
+    <div class="card-head"><div class="card-title"><h2>${esc(h.name || "새 허브")}</h2><small>${esc(h.url || "주소 입력 전")}</small></div>
+      ${isNew ? '<span class="badge warn">저장 전</span>' : '<span class="badge ok"><span class="dot ok"></span>저장됨</span>'}</div>
+    <div class="form-grid">${HUB_FIELDS.map((f) => inputHtml(f, v[f.name], `hub${i}`)).join("")}</div>
+    <p class="test-result" role="status" aria-live="polite"></p>
+    <div class="actions">
+      <button type="button" class="btn" data-sact="hub-test">연결 테스트</button>
+      <button type="button" class="btn primary" data-sact="hub-save">저장</button>
+      <button type="button" class="btn danger" data-sact="hub-remove">삭제</button>
+    </div></form>`;
+}
+
+function readHub(form, i) {
+  const r = readForm(form, HUB_FIELDS);
+  const appId = r.app_id ? Number(r.app_id) : null;
+  return {
+    orig_id: view._hubs[i].orig_id || null,
+    id: r.id, name: r.name, role: r.role, url: r.url,
+    maker_api: appId || r.token ? { app_id: appId || 0, token: r.token } : null,
+    login: r.login_user ? { username: r.login_user, password: r.login_password } : null,
+  };
+}
+
+async function renderSettings() {
+  const [s, me] = await Promise.all([api("/api/settings"), api("/api/auth/me")]);
+  view._settings = s;
+  view._hubs = s.hubitat.map((h) => ({ ...h, orig_id: h.id }));
+  drawSettings(me);
+}
+
+function drawSettings(me) {
+  const s = view._settings;
+  me = me || view._me;
+  view._me = me;
+  const byGroup = (g) => SECTION_DEFS.filter((d) => d.group === g).map((d) => sectionCard(d, s[d.key])).join("");
+  view.innerHTML = `
+    <header class="page-head"><div><h1>연결 설정</h1><p>허브와 서버의 주소·토큰을 입력하세요. 토큰과 비밀번호는 암호화되어 저장되고 화면에 다시 표시되지 않습니다.</p></div>
+      <a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="#/log">작업 기록</a></header>
+
+    <section class="section"><div class="section-head"><div><h2>Hubitat 허브</h2>
+      <p>허브마다 Apps → Add Built-In App → <b>Maker API</b>를 설치하고, "Allow Access via Local IP Address"를 켠 뒤 관리할 기기를 고르세요. 예시 URL의 <code>/apps/api/<b>App ID</b>/…?access_token=<b>토큰</b></code>을 아래에 넣습니다.</p></div>
+      <button type="button" class="btn accent" data-sact="hub-add">+ 허브 추가</button></div>
+      <div class="grid wide">${view._hubs.map(hubForm).join("") || '<div class="empty">아직 허브가 없습니다. "+ 허브 추가"를 누르세요.</div>'}</div>
+    </section>
+
+    <section class="section"><div class="section-head"><h2>스마트홈 서비스</h2></div>
+      <div class="grid wide">${byGroup("hub")}</div></section>
+
+    <section class="section"><div class="section-head"><h2>인프라</h2></div>
+      <div class="grid wide">${byGroup("infra")}</div></section>
+
+    <section class="section"><div class="section-head"><h2>알림 · 계정</h2></div>
+      <div class="grid wide">
+        <form class="card" data-section="alerts" novalidate>
+          <div class="card-title"><h2>알림 기준</h2><small>스마트홈 연동 화면의 "확인 필요"</small></div>
+          <div class="form-grid">${inputHtml({ name: "battery_warn", label: "배터리 경고 기준 (%)", type: "number" }, s.alerts.battery_warn, "alerts")}</div>
+          <p class="test-result" role="status" aria-live="polite"></p>
+          <div class="actions"><button type="button" class="btn primary" data-sact="save">저장</button></div>
+        </form>
+        <form class="card" id="pw-form" novalidate>
+          <div class="card-title"><h2>관리자 비밀번호</h2><small>로그인 계정 ${esc(me.user)}</small></div>
+          ${me.env_admin ? '<div class="howto">환경 변수(HOMEOPS_ADMIN_PASSWORD)로 지정한 계정이라 여기서는 바꿀 수 없습니다.</div>' : `
+          <div class="form-grid">
+            <label class="field full">현재 비밀번호<input type="password" name="current" autocomplete="current-password"></label>
+            <label class="field">새 비밀번호 (8자 이상)<input type="password" name="new" autocomplete="new-password" minlength="8"></label>
+            <label class="field">새 비밀번호 확인<input type="password" name="new2" autocomplete="new-password" minlength="8"></label>
+          </div>
+          <p class="test-result" role="status" aria-live="polite"></p>
+          <div class="actions"><button type="button" class="btn primary" data-sact="password">비밀번호 변경</button></div>`}
+        </form>
+      </div>
+    </section>`;
+}
+
+function setResult(form, ok, msg) {
+  const p = form.querySelector(".test-result");
+  p.textContent = msg;
+  p.className = "test-result " + (ok ? "ok" : "bad");
+}
+
+async function saveHubs(btn, message) {
+  const forms = [...view.querySelectorAll("form[data-hub]")];
+  const hubs = forms.map((f) => readHub(f, Number(f.dataset.hub)));
+  btn.disabled = true;
+  try {
+    const s = await api("/api/settings/hubitat", { method: "PUT", body: hubs });
+    view._settings = s;
+    view._hubs = s.hubitat.map((h) => ({ ...h, orig_id: h.id }));
+    drawSettings();
+    toast(message);
+  } catch (err) {
+    const form = btn.closest("form");
+    if (form) setResult(form, false, err.message);
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+view.addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-sact]");
+  if (!btn) return;
+  const form = btn.closest("form");
+  const a = btn.dataset.sact;
+
+  if (a === "hub-add") {
+    // 입력 중인 다른 허브 값은 그대로 두고 카드만 추가
+    view.querySelectorAll("form[data-hub]").forEach((f) => {
+      const i = Number(f.dataset.hub);
+      const prev = view._hubs[i];
+      const cur = { ...readHub(f, i), orig_id: prev.orig_id };
+      // 비워 둔 비밀값은 "저장됨" 표시를 유지
+      if (cur.maker_api && !cur.maker_api.token && prev.maker_api && prev.maker_api.token === MASK) cur.maker_api.token = MASK;
+      if (cur.login && !cur.login.password && prev.login && prev.login.password === MASK) cur.login.password = MASK;
+      view._hubs[i] = cur;
+    });
+    const n = view._hubs.length + 1;
+    view._hubs.push({ id: n === 1 ? "main" : `hub${n}`, name: "", role: "", url: "http://", maker_api: null, login: null, orig_id: null });
+    drawSettings();
+    const last = view.querySelector("form[data-hub]:last-of-type input[name=name]");
+    if (last) last.focus();
+    return;
+  }
+  if (a === "hub-save") return saveHubs(btn, "허브 설정을 저장했습니다");
+  if (a === "hub-remove") {
+    const i = Number(form.dataset.hub);
+    const h = view._hubs[i];
+    if (h.orig_id && !(await confirmBox("허브를 삭제할까요?", `${h.name || h.id} 연결 설정을 지웁니다. 허브 자체에는 영향이 없습니다.`, "삭제"))) return;
+    form.remove();
+    if (!h.orig_id) { view._hubs.splice(i, 1); drawSettings(); return; }
+    return saveHubs(btn, "허브를 삭제했습니다");
+  }
+  if (a === "hub-test") {
+    const hub = readHub(form, Number(form.dataset.hub));
+    btn.disabled = true; setResult(form, true, "연결하는 중…");
+    try {
+      const r = await api("/api/settings/test/hubitat", { method: "POST", body: hub });
+      setResult(form, r.ok, r.message);
+    } catch (err) { setResult(form, false, err.message); } finally { btn.disabled = false; }
+    return;
+  }
+  if (a === "password") {
+    const f = form.elements;
+    if (f.new.value !== f.new2.value) { setResult(form, false, "새 비밀번호 확인이 일치하지 않습니다"); return; }
+    try {
+      await api("/api/auth/password", { method: "POST", body: { current: f.current.value, new: f.new.value } });
+      form.reset(); setResult(form, true, "비밀번호를 바꿨습니다");
+    } catch (err) { setResult(form, false, err.message); }
+    return;
+  }
+
+  const key = form.dataset.section;
+  const def = SECTION_DEFS.find((d) => d.key === key);
+  const fields = def ? def.fields : [{ name: "battery_warn", type: "number" }];
+  const body = readForm(form, fields);
+  if (key === "alerts") body.battery_warn = Number(body.battery_warn);
+
+  if (a === "test") {
+    btn.disabled = true; setResult(form, true, "연결하는 중…");
+    try {
+      const r = await api(`/api/settings/test/${key}`, { method: "POST", body });
+      setResult(form, r.ok, r.message);
+    } catch (err) { setResult(form, false, err.message); } finally { btn.disabled = false; }
+    return;
+  }
+  if (a === "save" || a === "remove") {
+    if (a === "remove" && !(await confirmBox("연결을 해제할까요?", `${def.title} 연결 정보를 지웁니다.`, "해제"))) return;
+    btn.disabled = true;
+    try {
+      view._settings = await api(`/api/settings/${key}`, { method: "PUT", body: a === "remove" ? null : body });
+      drawSettings();
+      toast(a === "remove" ? `${def.title} 연결을 해제했습니다` : "저장했습니다");
+    } catch (err) {
+      setResult(form, false, err.message);
+    } finally { btn.disabled = false; }
+  }
+});
 
 /* ---------- 이벤트 ---------- */
 view.addEventListener("click", async (e) => {
@@ -487,7 +806,7 @@ view.addEventListener("click", async (e) => {
 });
 
 /* ---------- 라우팅 ---------- */
-const ROUTES = { infra: renderInfra, hubs: renderHubs, integration: renderIntegration, log: renderLog };
+const ROUTES = { infra: renderInfra, hubs: renderHubs, integration: renderIntegration, log: renderLog, settings: renderSettings };
 
 async function route() {
   const name = (location.hash.replace(/^#\/?/, "") || "integration").split("?")[0];
@@ -507,5 +826,11 @@ async function route() {
 window.addEventListener("hashchange", () => { view.innerHTML = ""; route(); view.focus(); });
 
 (async () => {
-  try { await api("/api/auth/me"); route(); } catch (_) { /* showLogin 처리됨 */ }
+  try {
+    const st = await api("/api/auth/status");
+    if (st.needs_setup) { showSetup(); return; }
+    await api("/api/auth/me");
+    showApp();
+    route();
+  } catch (_) { showLogin(); }
 })();

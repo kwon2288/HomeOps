@@ -14,13 +14,15 @@ from pydantic import BaseModel
 from .config import Runtime, Settings
 from .connectors.base import ConnectorError, describe
 from .db import Database
+from .store import SettingsStore
 
 
 @dataclass
 class Ctx:
-    settings: Settings
+    settings: Settings  # 연결 설정 화면에서 저장하면 통째로 바뀐다
     runtime: Runtime
     db: Database
+    store: SettingsStore
 
 
 def ctx(request: Request) -> Ctx:

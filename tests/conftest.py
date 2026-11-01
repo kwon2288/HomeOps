@@ -16,6 +16,15 @@ def runtime(tmp_path):
     )
 
 
+@pytest.fixture
+def web_runtime(tmp_path):
+    """환경 변수 계정 없이 웹에서 계정을 만드는 경우."""
+    return Runtime(
+        secret_key="test-secret", cookie_secure=None,
+        db_path=tmp_path / "homeops.db", backup_dir=tmp_path / "backups", backup_keep=2,
+    )
+
+
 def make_client(settings: Settings, runtime: Runtime, login: bool = True) -> TestClient:
     auth._fails.clear()
     client = TestClient(create_app(settings, runtime))

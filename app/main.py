@@ -8,23 +8,27 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 
 from . import auth
-from .config import Runtime, Settings, load_runtime, load_settings
+from .config import Runtime, Settings, load_runtime
 from .core import Ctx, ctx
 from .db import Database
-from .routers import hubs, infra, registry, smarthome
+from .routers import hubs, infra, registry, settings as settings_router, smarthome
+from .store import SettingsStore
 
 STATIC = Path(__file__).with_name("static")
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 
 def create_app(settings: Settings | None = None, runtime: Runtime | None = None) -> FastAPI:
-    settings = settings or load_settings()
     runtime = runtime or load_runtime()
     seed = os.environ.get("HOMEOPS_SEED")
     db = Database(runtime.db_path, Path(seed) if seed else None)
+    store = SettingsStore(db, runtime.secret_key)
+    if settings is not None:  # 테스트 등에서 직접 넘긴 경우
+        store.save(settings)
+    settings = store.load()
 
     app = FastAPI(title="HomeOps", version=VERSION, docs_url=None, redoc_url=None, openapi_url=None)
-    app.state.ctx = Ctx(settings=settings, runtime=runtime, db=db)
+    app.state.ctx = Ctx(settings=settings, runtime=runtime, db=db, store=store)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -41,6 +45,7 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
     app.include_router(hubs.router)
     app.include_router(registry.router)
     app.include_router(smarthome.router)
+    app.include_router(settings_router.router)
 
     @app.get("/api/health")
     def health() -> dict:
