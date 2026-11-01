@@ -15,47 +15,63 @@
 - 휴대폰에서는 하단 탭 메뉴로 바뀝니다 (홈 화면에 추가해 앱처럼 쓸 수 있음).
 - 토큰·비밀번호는 암호화해서 저장하고, 화면에는 "저장됨"으로만 표시합니다. 바꿀 때만 새로 입력하면 됩니다.
 
-## 설치 (Proxmox LXC + Docker)
+## 설치
 
-### 1. LXC 준비
+두 가지 중 편한 쪽을 고르세요. 기능은 같습니다.
 
-Proxmox에서 Debian 12 LXC를 만듭니다 (1 vCPU · 512MB~1GB RAM · 4GB 디스크면 충분).
-옵션 → 기능에서 **nesting**과 **keyctl**을 켜야 LXC 안에서 Docker가 동작합니다.
+| | A. LXC에 바로 설치 (권장) | B. 기존 Docker 호스트에 올리기 |
+|---|---|---|
+| 필요한 것 | Debian 12 / Ubuntu 24.04 LXC 하나 | 이미 쓰는 Docker + Portainer |
+| Docker | 필요 없음 | 기존 것 사용 |
+| 자원 | RAM 약 100MB, 디스크 1GB 미만 | 컨테이너 하나 |
+| 업데이트 | `homeops-update` | Portainer에서 스택 다시 배포 |
+
+### A. LXC에 바로 설치 (Docker 없이)
+
+1. Proxmox에서 **Debian 12** LXC를 만듭니다 (1 vCPU · 512MB RAM · 4GB 디스크면 충분, 비특권 컨테이너 그대로).
+2. LXC 콘솔에서:
 
 ```bash
-apt update && apt install -y curl git
-curl -fsSL https://get.docker.com | sh
-```
-
-### 2. 실행
-
-```bash
+apt update && apt install -y git
 git clone https://github.com/kwon2288/HomeOps.git /opt/homeops
-cd /opt/homeops
-docker compose up -d --build
+/opt/homeops/install.sh
 ```
 
-### 3. 웹에서 설정
+> 저장소가 비공개라면 clone 주소에 GitHub 토큰을 넣으세요: `https://<토큰>@github.com/kwon2288/HomeOps.git`
 
-1. `http://<LXC IP>:8080` 접속 → **관리자 계정 만들기** (처음 한 번만 나오는 화면)
+`install.sh`가 하는 일: Python 가상환경과 의존성 설치, `homeops` 서비스 계정 생성, systemd 서비스 등록·시작. 데이터는 `/var/lib/homeops`에 저장되어 코드 업데이트와 상관없이 유지됩니다.
+
+| 할 일 | 명령 |
+|---|---|
+| 업데이트 | `homeops-update` |
+| 상태 · 로그 | `systemctl status homeops` · `journalctl -u homeops -f` |
+| 포트 바꾸기 | `HOMEOPS_PORT=9090 /opt/homeops/install.sh` |
+| 환경 변수 추가 | `/etc/default/homeops`에 `HOMEOPS_COOKIE_SECURE=true` 같은 줄 추가 후 `systemctl restart homeops` |
+
+### B. 기존 Docker 호스트에 올리기 (Portainer 스택)
+
+1. Portainer → **Stacks → Add stack → Repository**
+2. Repository URL `https://github.com/kwon2288/HomeOps`, Reference `refs/heads/main`, Compose path `docker-compose.yml`
+   (비공개 저장소면 Authentication을 켜고 GitHub 아이디와 토큰 입력)
+3. **Deploy the stack**. 업데이트는 같은 스택에서 **Pull and redeploy**
+
+명령줄로 할 때는 `git clone` 후 `docker compose up -d --build`. 데이터는 `homeops-data` 볼륨에 저장됩니다.
+
+### 처음 접속
+
+1. `http://<설치한 곳 IP>:8080` 접속 → **관리자 계정 만들기** (처음 한 번만 나오는 화면)
 2. 자동으로 **연결 설정** 화면이 열립니다. 쓰는 시스템만 입력하고 **연결 테스트 → 저장**
 3. 저장하는 즉시 각 메뉴에 반영됩니다 (재시작 필요 없음)
 
 > 처음 계정 만들기 화면은 계정이 없을 때 누구나 열 수 있습니다. 설치 직후 바로 계정을 만들고, 그 전에는 외부에 열지 마세요.
 
-업데이트:
-
-```bash
-cd /opt/homeops && git pull && docker compose up -d --build
-```
-
-데이터(계정, 연결 설정, 수동 등록 기기, 작업 기록, 허브 백업 파일)는 모두 `data/` 폴더에 있습니다. 아래 **백업 · 복구** 기능을 쓰면 이 내용을 한 파일로 받아 두거나 다른 HomeOps로 옮길 수 있습니다.
+데이터(계정, 연결 설정, 수동 등록 기기, 작업 기록, 백업 파일)는 A는 `/var/lib/homeops`, B는 `homeops-data` 볼륨에 있습니다. 아래 **백업 · 복구** 기능으로 한 파일로 받아 두거나 다른 HomeOps로 옮길 수 있습니다 (A ↔ B 사이 이동도 가능).
 
 ### 외부 접속 (권장: NPM + HTTPS)
 
 이 앱은 허브 재부팅이나 컨테이너 중지까지 할 수 있으므로 **HTTP로 바로 포트포워딩하지 마세요.**
 
-1. Nginx Proxy Manager에 Proxy Host 추가 → `http://<LXC IP>:8080`, SSL 인증서 발급, Force SSL 켜기
+1. Nginx Proxy Manager에 Proxy Host 추가 → `http://<설치한 곳 IP>:8080`, SSL 인증서 발급, Force SSL 켜기
 2. 가능하면 Cloudflare Access(또는 국가 제한 + WAF 규칙)를 앞에 한 겹 더 두는 것을 권합니다.
 
 HTTPS로 접속하면 로그인 쿠키가 자동으로 Secure로 설정됩니다. 로그인은 5번 틀리면 해당 IP가 5분간 잠깁니다.
@@ -72,7 +88,7 @@ HTTPS로 접속하면 로그인 쿠키가 자동으로 Secure로 설정됩니다
 |---|---|
 | 백업 파일 | `homeops-YYYYMMDD-HHMMSS.hob` — 계정, 연결 설정, 수동 등록 기기, 플랫폼 역할, 연동 경로, 작업 기록, 암호화 키. 선택하면 Hubitat 허브 백업 파일(허브별 최신 1개)도 포함 |
 | 암호화 | 백업 암호 → scrypt로 키 생성 → Fernet(AES-128-CBC + HMAC-SHA256) |
-| 저장 위치 | 로컬 `data/homeops-backups/` + 켜 둔 FTP · WebDAV 전부 (원격 업로드가 실패해도 로컬에는 남고, 화면과 작업 기록에 실패가 표시됨) |
+| 저장 위치 | 로컬(데이터 폴더의 `homeops-backups/`) + 켜 둔 FTP · WebDAV 전부 (원격 업로드가 실패해도 로컬에는 남고, 화면과 작업 기록에 실패가 표시됨) |
 | 보관 개수 | 로컬 기본 14개, 원격 기본 30개. 넘으면 오래된 것부터 지움 (HomeOps 백업 파일만) |
 | 복구 | 로컬 · FTP · WebDAV 목록에서 고르거나, PC에 받아 둔 `.hob` 파일을 올려서 복구. 복구 직전 상태는 로컬에 `-before-restore` 백업으로 자동 보관 |
 
@@ -97,7 +113,7 @@ HTTPS로 접속하면 로그인 쿠키가 자동으로 Secure로 설정됩니다
 - 기기 목록·제어·모드·HSM은 공식 **Maker API**를 씁니다.
 - 메모리·온도·DB 크기·펌웨어·재부팅·백업은 허브 관리 화면이 쓰는 **비공식 URL**(`/hub/advanced/*`, `/hub2/hubData`, `/hub/reboot`, `/hub/backupDB`)이라 펌웨어 업데이트 후 동작이 달라질 수 있습니다. 값이 안 나오면 "—"로 표시되고 나머지 기능은 그대로 동작합니다.
 - 허브에 로그인 보안을 켰다면 허브 카드에 허브 로그인 계정도 입력하세요.
-- 허브 백업 파일은 `data/backups/`에 허브별로 10개까지 보관되고, 허브 화면에서 내려받을 수 있습니다.
+- 허브 백업 파일은 데이터 폴더의 `backups/`에 허브별로 10개까지 보관되고, 허브 화면에서 내려받을 수 있습니다.
 
 ## 고급: 환경 변수 (모두 선택)
 
@@ -105,7 +121,7 @@ HTTPS로 접속하면 로그인 쿠키가 자동으로 Secure로 설정됩니다
 |---|---|---|
 | `HOMEOPS_COOKIE_SECURE` | `auto` | `auto`는 HTTPS로 접속할 때만 Secure 쿠키. `true`/`false`로 고정 가능 |
 | `HOMEOPS_BACKUP_KEEP` | `10` | Hubitat 백업 파일 보관 개수 (허브별) |
-| `HOMEOPS_SECRET_KEY` | 자동 생성 | 지정하지 않으면 `data/secret.key`를 만들어 씁니다 |
+| `HOMEOPS_SECRET_KEY` | 자동 생성 | 지정하지 않으면 데이터 폴더에 `secret.key`를 만들어 씁니다 |
 | `HOMEOPS_ADMIN_USER` / `HOMEOPS_ADMIN_PASSWORD` | 없음 | 웹 계정 대신 고정 계정을 쓰고 싶을 때만. 지정하면 웹 계정 만들기·비밀번호 변경이 꺼집니다 |
 | `HOMEOPS_SEED` | 없음 | 수동 등록 기기·플랫폼 역할·연동 경로의 첫 기본값 파일 (기본: `app/seed_default.yaml`) |
 
@@ -151,6 +167,12 @@ tests/               pytest (외부 API는 respx로 흉내, FTP·WebDAV는 실�
 위험한 작업(재부팅·종료·중지·재시작)은 본문에 `{"confirm": true}`가 있어야 실행됩니다.
 
 ## 변경 이력
+
+### v0.3.1 — 2026-11-01
+- **Docker 없이 LXC에 바로 설치**하는 `install.sh` 추가 (Python 가상환경 + systemd 서비스, 데이터는 `/var/lib/homeops`)
+- `homeops-update` 명령으로 업데이트
+- Docker 설치는 Portainer 스택(Repository)으로 바로 올릴 수 있도록 데이터 저장을 이름 있는 볼륨(`homeops-data`)으로 변경
+- Python 3.11(Debian 12 기본)에서도 동작 확인
 
 ### v0.3.0 — 2026-11-01
 - **백업 · 복구** 메뉴 추가

@@ -1,3 +1,4 @@
+# Portainer: Stacks → Add stack → Repository 로 이 파일을 그대로 쓸 수 있습니다.
 services:
   homeops:
     build: .
@@ -7,8 +8,11 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./data:/app/data   # DB, 암호화 키, Hubitat 백업 파일
+      - homeops-data:/app/data   # DB, 암호화 키, 백업 파일
     # 아래는 모두 선택 사항입니다. 계정과 연결 정보는 웹 화면에서 입력하세요.
     # environment:
-    #   HOMEOPS_COOKIE_SECURE: "auto"   # auto | true | false (auto: HTTPS로 접속하면 Secure 쿠키)
+    #   HOMEOPS_COOKIE_SECURE: "auto"   # auto | true | false
     #   HOMEOPS_BACKUP_KEEP: "10"       # Hubitat 백업 파일 보관 개수 (허브별)
+
+volumes:
+  homeops-data:
