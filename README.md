@@ -76,6 +76,35 @@ git clone https://github.com/kwon2288/HomeOps.git /opt/homeops
 
 HTTPS로 접속하면 로그인 쿠키가 자동으로 Secure로 설정됩니다. 로그인은 5번 틀리면 해당 IP가 5분간 잠깁니다.
 
+## 삭제
+
+데이터까지 지우기 전에 **백업 · 복구**에서 "지금 백업"으로 백업 파일을 받아 두면, 나중에 다시 설치해도 계정과 연결 설정을 그대로 되살릴 수 있습니다.
+
+### A. LXC에 바로 설치한 경우
+
+HomeOps 전용 LXC라면 Proxmox에서 그 LXC를 삭제하는 것이 가장 깔끔합니다. LXC는 남기고 HomeOps만 지우려면:
+
+```bash
+systemctl disable --now homeops
+rm /etc/systemd/system/homeops.service /usr/local/bin/homeops-update
+systemctl daemon-reload
+rm -rf /opt/homeops
+userdel homeops
+```
+
+데이터 폴더(`/var/lib/homeops`)는 위 명령으로는 남아 있어서, 다시 설치하면 그대로 이어서 쓸 수 있습니다. 완전히 지우려면:
+
+```bash
+rm -rf /var/lib/homeops
+```
+
+### B. Portainer 스택으로 올린 경우
+
+1. Portainer → **Stacks** → homeops 선택 → **Remove**
+2. 데이터까지 지우려면 **Volumes**에서 `homeops-data` 삭제
+
+명령줄로 설치했다면 저장소 폴더에서 `docker compose down`(데이터 유지) 또는 `docker compose down -v`(데이터까지 삭제) 후 폴더를 지우면 됩니다.
+
 ## 백업과 복구
 
 **백업 · 복구** 메뉴에서 설정합니다.
