@@ -533,21 +533,6 @@ function readForm(form, fields) {
   return out;
 }
 
-function sectionCard(def, value) {
-  const configured = value !== null && value !== undefined;
-  return `<form class="card" data-section="${def.key}" novalidate>
-    <div class="card-head"><div class="card-title"><h2>${esc(def.title)}</h2><small>${esc(def.sub)}</small></div>
-      ${configured ? '<span class="badge ok"><span class="dot ok"></span>저장됨</span>' : '<span class="badge"><span class="dot"></span>연결 전</span>'}</div>
-    <div class="howto">${def.help}</div>
-    <div class="form-grid">${def.fields.map((f) => inputHtml(f, configured ? value[f.name] : undefined, def.key)).join("")}</div>
-    <p class="test-result" role="status" aria-live="polite"></p>
-    <div class="actions">
-      <button type="button" class="btn" data-sact="test">연결 테스트</button>
-      <button type="button" class="btn primary" data-sact="save">저장</button>
-      ${configured ? '<button type="button" class="btn danger" data-sact="remove">연결 해제</button>' : ""}
-    </div></form>`;
-}
-
 const HUB_FIELDS = [
   { name: "name", label: "이름", ph: "Hubitat Main" },
   { name: "id", label: "ID (영문 소문자)", ph: "main" },
@@ -558,24 +543,24 @@ const HUB_FIELDS = [
   { name: "login_user", label: "허브 로그인 아이디 (로그인 보안을 켠 경우만)", ph: "비워 두면 사용 안 함" },
   { name: "login_password", label: "허브 로그인 비밀번호", secret: true },
 ];
+const HUB_HELP = '허브 웹 → Apps → Add Built-In App → <b>Maker API</b>를 설치하고, "Allow Access via Local IP Address"를 켠 뒤 관리할 기기를 고르세요. 예시 URL의 <code>/apps/api/<b>App ID</b>/…?access_token=<b>토큰</b></code>을 넣으면 됩니다.';
 
-function hubForm(h, i) {
-  const v = {
+// 추가할 수 있는 연결 종류 (고르기 화면)
+const CONN_TYPES = [
+  { key: "hubitat", group: "스마트홈", title: "Hubitat 허브", desc: "기기 제어 · 모드 · 허브 백업 · 재부팅", multi: true },
+  { key: "home_assistant", group: "스마트홈", title: "Home Assistant", desc: "엔티티 제어 · 백업 · 재시작" },
+  { key: "homebridge", group: "스마트홈", title: "Homebridge", desc: "HomeKit 노출 확인 · 재시작" },
+  { key: "synology", group: "인프라", title: "Synology NAS", desc: "볼륨 · 디스크 · 리소스 · 재부팅" },
+  { key: "proxmox", group: "인프라", title: "Proxmox VE", desc: "VM · LXC 전원 · 스냅샷 · 백업" },
+  { key: "portainer", group: "인프라", title: "Portainer", desc: "컨테이너 · 스택 · 로그" },
+];
+
+function hubValues(h) {
+  return {
     name: h.name, id: h.id, role: h.role, url: h.url,
     app_id: h.maker_api ? h.maker_api.app_id : "", token: h.maker_api ? h.maker_api.token : "",
     login_user: h.login ? h.login.username : "", login_password: h.login ? h.login.password : "",
   };
-  const isNew = !h.orig_id;
-  return `<form class="card" data-hub="${i}" novalidate>
-    <div class="card-head"><div class="card-title"><h2>${esc(h.name || "새 허브")}</h2><small>${esc(h.url || "주소 입력 전")}</small></div>
-      ${isNew ? '<span class="badge warn">저장 전</span>' : '<span class="badge ok"><span class="dot ok"></span>저장됨</span>'}</div>
-    <div class="form-grid">${HUB_FIELDS.map((f) => inputHtml(f, v[f.name], `hub${i}`)).join("")}</div>
-    <p class="test-result" role="status" aria-live="polite"></p>
-    <div class="actions">
-      <button type="button" class="btn" data-sact="hub-test">연결 테스트</button>
-      <button type="button" class="btn primary" data-sact="hub-save">저장</button>
-      <button type="button" class="btn danger" data-sact="hub-remove">삭제</button>
-    </div></form>`;
 }
 
 function readHub(form, i) {
@@ -589,44 +574,93 @@ function readHub(form, i) {
   };
 }
 
+function shortUrl(u) { return String(u || "").replace(/^https?:\/\//, "").replace(/\/$/, ""); }
+
+/** 연결 하나의 카드: 접힌 상태(요약) 또는 편집 상태(입력 폼) */
+function connCard({ cardKey, typeLabel, title, sub, isNew, editing, help, fields, values }) {
+  if (!editing) {
+    return `<article class="card conn" data-card="${esc(cardKey)}">
+      <div class="card-head"><div class="card-title"><span class="type-label">${esc(typeLabel)}</span><b>${esc(title)}</b><small>${esc(sub || "")}</small></div>
+        <span class="badge ok"><span class="dot ok"></span>저장됨</span></div>
+      <p class="test-result" role="status" aria-live="polite"></p>
+      <div class="actions"><button type="button" class="btn" data-sact="test">연결 테스트</button>
+        <button type="button" class="btn" data-sact="edit">편집</button>
+        <button type="button" class="btn danger" data-sact="remove">삭제</button></div></article>`;
+  }
+  return `<form class="card conn editing" data-card="${esc(cardKey)}" novalidate>
+    <div class="card-head"><div class="card-title"><span class="type-label">${esc(typeLabel)}</span><h2>${esc(isNew ? `${cardKey.startsWith("hub:") ? "Hubitat 허브" : title} 추가` : title)}</h2></div>
+      ${isNew ? '<span class="badge warn">새 연결</span>' : ""}</div>
+    <div class="howto">${help}</div>
+    <div class="form-grid">${fields.map((f) => inputHtml(f, values[f.name], cardKey.replace(/\W/g, ""))).join("")}</div>
+    <p class="test-result" role="status" aria-live="polite"></p>
+    <div class="actions"><button type="button" class="btn" data-sact="test">연결 테스트</button>
+      <button type="button" class="btn primary" data-sact="save">저장</button>
+      <button type="button" class="btn" data-sact="cancel">취소</button></div></form>`;
+}
+
+function typePicker(compact) {
+  const s = view._settings;
+  const groups = ["스마트홈", "인프라"];
+  return groups.map((g) => `<div class="picker-group"><span class="rows-title">${g}</span><div class="picker">
+    ${CONN_TYPES.filter((t) => t.group === g).map((t) => {
+      const added = !t.multi && (s[t.key] || view._adding.has(t.key));
+      return `<button type="button" class="pick" data-add="${t.key}" ${added ? "disabled" : ""}>
+        <b>${esc(t.title)}</b><small>${added ? "추가됨" : esc(t.desc)}</small></button>`;
+    }).join("")}</div></div>`).join("") + (compact ? "" : "");
+}
+
 async function renderSettings() {
   const [s, me] = await Promise.all([api("/api/settings"), api("/api/auth/me")]);
   view._settings = s;
+  view._me = me;
   view._hubs = s.hubitat.map((h) => ({ ...h, orig_id: h.id }));
-  drawSettings(me);
+  view._editing = new Set();
+  view._adding = new Set();
+  drawSettings();
 }
 
-function drawSettings(me) {
+function drawSettings() {
   const s = view._settings;
-  me = me || view._me;
-  view._me = me;
-  const byGroup = (g) => SECTION_DEFS.filter((d) => d.group === g).map((d) => sectionCard(d, s[d.key])).join("");
+  const me = view._me;
+  const cards = [];
+  view._hubs.forEach((h, i) => {
+    const key = `hub:${i}`;
+    const isNew = !h.orig_id;
+    cards.push(connCard({
+      cardKey: key, typeLabel: "Hubitat 허브", title: h.name || h.id, sub: `${shortUrl(h.url)}${h.role ? " · " + h.role : ""}`,
+      isNew, editing: isNew || view._editing.has(key), help: HUB_HELP, fields: HUB_FIELDS, values: hubValues(h),
+    }));
+  });
+  for (const def of SECTION_DEFS) {
+    const v = s[def.key];
+    const adding = view._adding.has(def.key);
+    if (!v && !adding) continue;
+    cards.push(connCard({
+      cardKey: def.key, typeLabel: def.group === "infra" ? "인프라" : "스마트홈", title: def.title, sub: v ? shortUrl(v.url) : "",
+      isNew: !v, editing: !v || view._editing.has(def.key), help: def.help, fields: def.fields, values: v || {},
+    }));
+  }
+  const empty = cards.length === 0;
+  const savedCount = view._hubs.filter((h) => h.orig_id).length + SECTION_DEFS.filter((d) => s[d.key]).length;
+
   view.innerHTML = `
-    <header class="page-head"><div><h1>연결 설정</h1><p>허브와 서버의 주소·토큰을 입력하세요. 토큰과 비밀번호는 암호화되어 저장되고 화면에 다시 표시되지 않습니다.</p></div>
-      <div class="chips"><a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="#/backup">백업 · 복구</a>
-      <a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="#/log">작업 기록</a></div></header>
+    <header class="page-head"><div><h1>연결 설정</h1><p>${empty ? "쓰는 시스템만 골라서 연결하세요." : `연결 ${savedCount}개 · 토큰과 비밀번호는 암호화되어 저장됩니다.`}</p></div>
+      <div class="chips">${empty ? "" : '<button type="button" class="btn primary" data-sact="add">+ 연결 추가</button>'}</div></header>
 
-    <section class="section"><div class="section-head"><div><h2>Hubitat 허브</h2>
-      <p>허브마다 Apps → Add Built-In App → <b>Maker API</b>를 설치하고, "Allow Access via Local IP Address"를 켠 뒤 관리할 기기를 고르세요. 예시 URL의 <code>/apps/api/<b>App ID</b>/…?access_token=<b>토큰</b></code>을 아래에 넣습니다.</p></div>
-      <button type="button" class="btn accent" data-sact="hub-add">+ 허브 추가</button></div>
-      <div class="grid wide">${view._hubs.map(hubForm).join("") || '<div class="empty">아직 허브가 없습니다. "+ 허브 추가"를 누르세요.</div>'}</div>
-    </section>
+    ${empty ? `<section class="card onboarding"><div class="card-title"><h2>무엇부터 연결할까요?</h2>
+        <small>하나만 연결해도 바로 쓸 수 있고, 나머지는 나중에 "+ 연결 추가"로 언제든 붙일 수 있어요.</small></div>
+        ${typePicker()}</section>`
+      : `<div class="grid wide">${cards.join("")}</div>`}
 
-    <section class="section"><div class="section-head"><h2>스마트홈 서비스</h2></div>
-      <div class="grid wide">${byGroup("hub")}</div></section>
-
-    <section class="section"><div class="section-head"><h2>인프라</h2></div>
-      <div class="grid wide">${byGroup("infra")}</div></section>
-
-    <section class="section"><div class="section-head"><h2>알림 · 계정</h2></div>
-      <div class="grid wide">
-        <form class="card" data-section="alerts" novalidate>
+    <details class="card fold"><summary><b>알림 · 계정</b><small>배터리 경고 기준 ${s.alerts.battery_warn}% · 로그인 ${esc(me.user)}</small></summary>
+      <div class="grid wide" style="margin-top:12px">
+        <form class="card" data-section="alerts" novalidate style="background:var(--raise)">
           <div class="card-title"><h2>알림 기준</h2><small>스마트홈 연동 화면의 "확인 필요"</small></div>
           <div class="form-grid">${inputHtml({ name: "battery_warn", label: "배터리 경고 기준 (%)", type: "number" }, s.alerts.battery_warn, "alerts")}</div>
           <p class="test-result" role="status" aria-live="polite"></p>
-          <div class="actions"><button type="button" class="btn primary" data-sact="save">저장</button></div>
+          <div class="actions"><button type="button" class="btn primary" data-sact="alerts-save">저장</button></div>
         </form>
-        <form class="card" id="pw-form" novalidate>
+        <form class="card" id="pw-form" novalidate style="background:var(--raise)">
           <div class="card-title"><h2>관리자 비밀번호</h2><small>로그인 계정 ${esc(me.user)}</small></div>
           ${me.env_admin ? '<div class="howto">환경 변수(HOMEOPS_ADMIN_PASSWORD)로 지정한 계정이라 여기서는 바꿀 수 없습니다.</div>' : `
           <div class="form-grid">
@@ -638,7 +672,10 @@ function drawSettings(me) {
           <div class="actions"><button type="button" class="btn primary" data-sact="password">비밀번호 변경</button></div>`}
         </form>
       </div>
-    </section>`;
+    </details>
+
+    <div class="chips"><a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="#/backup">백업 · 복구</a>
+      <a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="#/log">작업 기록</a></div>`;
 }
 
 function setResult(form, ok, msg) {
@@ -647,65 +684,79 @@ function setResult(form, ok, msg) {
   p.className = "test-result " + (ok ? "ok" : "bad");
 }
 
-async function saveHubs(btn, message) {
-  const forms = [...view.querySelectorAll("form[data-hub]")];
-  const hubs = forms.map((f) => readHub(f, Number(f.dataset.hub)));
+/** 편집 중인 허브 폼의 입력값을 view._hubs 에 옮겨 둔다 (다시 그려도 입력이 남도록) */
+function keepHubInputs() {
+  view.querySelectorAll('form[data-card^="hub:"]').forEach((f) => {
+    const i = Number(f.dataset.card.split(":")[1]);
+    const prev = view._hubs[i];
+    const cur = { ...readHub(f, i), orig_id: prev.orig_id };
+    if (cur.maker_api && !cur.maker_api.token && prev.maker_api && prev.maker_api.token === MASK) cur.maker_api.token = MASK;
+    if (cur.login && !cur.login.password && prev.login && prev.login.password === MASK) cur.login.password = MASK;
+    view._hubs[i] = cur;
+  });
+}
+
+/** 저장된 허브 목록 + 바꾼 허브 하나로 저장 */
+async function saveHubList(hubs, btn, message) {
   btn.disabled = true;
   try {
     const s = await api("/api/settings/hubitat", { method: "PUT", body: hubs });
     view._settings = s;
-    view._hubs = s.hubitat.map((h) => ({ ...h, orig_id: h.id }));
+    const pending = view._hubs.filter((h) => !h.orig_id && !hubs.includes(h));
+    view._hubs = [...s.hubitat.map((h) => ({ ...h, orig_id: h.id })), ...pending];
+    view._editing = new Set([...view._editing].filter((k) => !k.startsWith("hub:")));
     drawSettings();
     toast(message);
+    return true;
   } catch (err) {
-    const form = btn.closest("form");
+    const form = btn.closest("form, article");
     if (form) setResult(form, false, err.message);
     toast(err.message, true);
+    return false;
   } finally {
     btn.disabled = false;
   }
 }
 
-view.addEventListener("click", async (e) => {
-  const btn = e.target.closest("[data-sact]");
-  if (!btn) return;
-  const form = btn.closest("form");
-  const a = btn.dataset.sact;
-
-  if (a === "hub-add") {
-    // 입력 중인 다른 허브 값은 그대로 두고 카드만 추가
-    view.querySelectorAll("form[data-hub]").forEach((f) => {
-      const i = Number(f.dataset.hub);
-      const prev = view._hubs[i];
-      const cur = { ...readHub(f, i), orig_id: prev.orig_id };
-      // 비워 둔 비밀값은 "저장됨" 표시를 유지
-      if (cur.maker_api && !cur.maker_api.token && prev.maker_api && prev.maker_api.token === MASK) cur.maker_api.token = MASK;
-      if (cur.login && !cur.login.password && prev.login && prev.login.password === MASK) cur.login.password = MASK;
-      view._hubs[i] = cur;
-    });
+function startAdd(type) {
+  keepHubInputs();
+  if (type === "hubitat") {
     const n = view._hubs.length + 1;
-    view._hubs.push({ id: n === 1 ? "main" : `hub${n}`, name: "", role: "", url: "http://", maker_api: null, login: null, orig_id: null });
-    drawSettings();
-    const last = view.querySelector("form[data-hub]:last-of-type input[name=name]");
-    if (last) last.focus();
+    const ids = new Set(view._hubs.map((h) => h.id));
+    let id = n === 1 ? "main" : `hub${n}`;
+    while (ids.has(id)) id += "x";
+    view._hubs.push({ id, name: "", role: "", url: "http://", maker_api: null, login: null, orig_id: null });
+  } else {
+    view._adding.add(type);
+  }
+  drawSettings();
+  const key = type === "hubitat" ? `hub:${view._hubs.length - 1}` : type;
+  const card = view.querySelector(`[data-card="${key}"]`);
+  if (card) {
+    card.scrollIntoView({ behavior: "smooth", block: "start" });
+    const first = card.querySelector("input:not([type=checkbox])");
+    if (first) first.focus({ preventScroll: true });
+  }
+}
+
+view.addEventListener("click", async (e) => {
+  const pick = e.target.closest("[data-add]");
+  if (pick && view.dataset.route === "settings") {
+    if (dlg.open) dlg.close("cancel");
+    startAdd(pick.dataset.add);
     return;
   }
-  if (a === "hub-save") return saveHubs(btn, "허브 설정을 저장했습니다");
-  if (a === "hub-remove") {
-    const i = Number(form.dataset.hub);
-    const h = view._hubs[i];
-    if (h.orig_id && !(await confirmBox("허브를 삭제할까요?", `${h.name || h.id} 연결 설정을 지웁니다. 허브 자체에는 영향이 없습니다.`, "삭제"))) return;
-    form.remove();
-    if (!h.orig_id) { view._hubs.splice(i, 1); drawSettings(); return; }
-    return saveHubs(btn, "허브를 삭제했습니다");
-  }
-  if (a === "hub-test") {
-    const hub = readHub(form, Number(form.dataset.hub));
-    btn.disabled = true; setResult(form, true, "연결하는 중…");
-    try {
-      const r = await api("/api/settings/test/hubitat", { method: "POST", body: hub });
-      setResult(form, r.ok, r.message);
-    } catch (err) { setResult(form, false, err.message); } finally { btn.disabled = false; }
+  const btn = e.target.closest("[data-sact]");
+  if (!btn) return;
+  const a = btn.dataset.sact;
+  const card = btn.closest("[data-card]");
+  const form = btn.closest("form") || card;
+
+  if (a === "add") {
+    keepHubInputs();
+    dlg.innerHTML = `<form method="dialog" class="dlg"><h2>연결 추가</h2><p>추가할 시스템을 고르세요.</p>${typePicker()}
+      <div class="dlg-foot"><button class="btn" value="cancel">닫기</button></div></form>`;
+    dlg.showModal();
     return;
   }
   if (a === "password") {
@@ -717,32 +768,93 @@ view.addEventListener("click", async (e) => {
     } catch (err) { setResult(form, false, err.message); }
     return;
   }
+  if (a === "alerts-save") {
+    btn.disabled = true;
+    try {
+      view._settings = await api("/api/settings/alerts", { method: "PUT", body: { battery_warn: Number(form.elements.battery_warn.value) } });
+      setResult(form, true, "저장했습니다");
+    } catch (err) { setResult(form, false, err.message); } finally { btn.disabled = false; }
+    return;
+  }
+  if (!card) return;
+  const key = card.dataset.card;
+  const isHub = key.startsWith("hub:");
+  const i = isHub ? Number(key.split(":")[1]) : -1;
+  const def = isHub ? null : SECTION_DEFS.find((d) => d.key === key);
+  const editing = card.tagName === "FORM";
 
-  const key = form.dataset.section;
-  const def = SECTION_DEFS.find((d) => d.key === key);
-  const fields = def ? def.fields : [{ name: "battery_warn", type: "number" }];
-  const body = readForm(form, fields);
-  if (key === "alerts") body.battery_warn = Number(body.battery_warn);
+  if (a === "edit") { keepHubInputs(); view._editing.add(key); drawSettings(); return; }
+  if (a === "cancel") {
+    keepHubInputs();
+    if (isHub) {
+      if (!view._hubs[i].orig_id) view._hubs.splice(i, 1);
+      else view._hubs[i] = { ...view._settings.hubitat.find((h) => h.id === view._hubs[i].orig_id), orig_id: view._hubs[i].orig_id };
+    } else {
+      view._adding.delete(key);
+    }
+    view._editing.delete(key);
+    drawSettings();
+    return;
+  }
+
+  // 입력값(편집 중) 또는 저장된 값(접힌 카드)
+  let body;
+  if (isHub) body = editing ? readHub(card, i) : { ...view._hubs[i] };
+  else body = editing ? readForm(card, def.fields) : view._settings[key];
 
   if (a === "test") {
     btn.disabled = true; setResult(form, true, "연결하는 중…");
     try {
-      const r = await api(`/api/settings/test/${key}`, { method: "POST", body });
+      const r = await api(`/api/settings/test/${isHub ? "hubitat" : key}`, { method: "POST", body });
       setResult(form, r.ok, r.message);
     } catch (err) { setResult(form, false, err.message); } finally { btn.disabled = false; }
     return;
   }
-  if (a === "save" || a === "remove") {
-    if (a === "remove" && !(await confirmBox("연결을 해제할까요?", `${def.title} 연결 정보를 지웁니다.`, "해제"))) return;
+  if (a === "save") {
+    if (isHub) {
+      const saved = view._hubs.filter((h, j) => h.orig_id && j !== i);
+      const list = [...saved, body];
+      view._hubs[i] = body;
+      if (await saveHubList(list, btn, "허브를 저장했습니다")) { /* 다시 그려짐 */ }
+      return;
+    }
     btn.disabled = true;
     try {
-      view._settings = await api(`/api/settings/${key}`, { method: "PUT", body: a === "remove" ? null : body });
+      view._settings = await api(`/api/settings/${key}`, { method: "PUT", body });
+      view._adding.delete(key);
+      view._editing.delete(key);
+      keepHubInputs();
       drawSettings();
-      toast(a === "remove" ? `${def.title} 연결을 해제했습니다` : "저장했습니다");
-    } catch (err) {
-      setResult(form, false, err.message);
-    } finally { btn.disabled = false; }
+      toast(`${def.title} 연결을 저장했습니다`);
+    } catch (err) { setResult(form, false, err.message); } finally { btn.disabled = false; }
+    return;
   }
+  if (a === "remove") {
+    const name = isHub ? (view._hubs[i].name || view._hubs[i].id) : def.title;
+    if (!(await confirmBox("연결을 삭제할까요?", `${name} 연결 정보를 지웁니다. 장비 자체에는 영향이 없습니다.`, "삭제"))) return;
+    if (isHub) {
+      const list = view._hubs.filter((h, j) => h.orig_id && j !== i);
+      view._hubs.splice(i, 1);
+      await saveHubList(list, btn, `${name} 연결을 삭제했습니다`);
+      return;
+    }
+    try {
+      view._settings = await api(`/api/settings/${key}`, { method: "PUT", body: null });
+      keepHubInputs();
+      drawSettings();
+      toast(`${def.title} 연결을 삭제했습니다`);
+    } catch (err) { toast(err.message, true); }
+  }
+});
+
+// 연결 추가 대화상자 안의 종류 버튼
+dlg.addEventListener("click", (e) => {
+  const pick = e.target.closest("[data-add]");
+  if (!pick || pick.disabled) return;
+  e.preventDefault();
+  dlg.close("cancel");
+  if (view.dataset.route === "settings") startAdd(pick.dataset.add);
+  else if (view.dataset.route === "backup") startAddTarget(pick.dataset.add);
 });
 
 /* ---------- 백업 · 복구 ---------- */
@@ -756,7 +868,6 @@ const BK_GENERAL = [
   { name: "include_hub_backups", label: "Hubitat 허브 백업 파일(허브별 최신 1개) 포함", type: "bool", def: false },
 ];
 const BK_FTP = [
-  { name: "enabled", label: "FTP에도 저장", type: "bool", def: false },
   { name: "host", label: "서버 주소", ph: "192.168.0.x 또는 nas.local" },
   { name: "port", label: "포트", type: "number", def: 21 },
   { name: "tls", label: "FTPS (TLS) 사용", type: "bool", def: false },
@@ -765,13 +876,16 @@ const BK_FTP = [
   { name: "path", label: "저장 폴더 (없으면 만듭니다)", def: "/homeops", full: true },
 ];
 const BK_DAV = [
-  { name: "enabled", label: "WebDAV에도 저장", type: "bool", def: false },
   { name: "url", label: "폴더 주소 (없으면 만듭니다)", ph: "https://192.168.0.x:5006/backup/homeops", full: true },
   { name: "username", label: "아이디" },
   { name: "password", label: "비밀번호", secret: true },
   { name: "verify_ssl", label: "HTTPS 인증서 검증 (자체 서명 인증서면 끄기)", type: "bool", def: true },
 ];
 let backupTab = "local";
+const BK_TARGETS = {
+  ftp: { title: "FTP", sub: "FTP / FTPS 서버", desc: "NAS나 공유기의 FTP 서버", fields: BK_FTP },
+  webdav: { title: "WebDAV", sub: "Synology WebDAV, Nextcloud 등", desc: "Synology WebDAV, Nextcloud 등", fields: BK_DAV },
+};
 
 function fmtSize(n) {
   if (n === null || n === undefined) return "—";
@@ -789,21 +903,23 @@ async function renderBackup() {
   const [st, s] = await Promise.all([api("/api/backup"), api("/api/settings")]);
   view._bk = st;
   view._settings = s;
+  view._bkAdding = new Set();
   if (backupTab !== "local" && !st.targets[backupTab]) backupTab = "local";
   await drawBackup();
 }
 
-function bkForm(kind, title, sub, fields, value, extraButtons) {
+function bkForm(kind, title, sub, fields, value, extraButtons, afterButtons = "") {
   return `<form class="card" data-bk="${kind}" novalidate>
     <div class="card-title"><h2>${esc(title)}</h2><small>${esc(sub)}</small></div>
     <div class="form-grid">${fields.map((f) => inputHtml(f, value[f.name], `bk-${kind}`)).join("")}</div>
     <p class="test-result" role="status" aria-live="polite"></p>
-    <div class="actions">${extraButtons}<button type="button" class="btn primary" data-bact="save">저장</button></div></form>`;
+    <div class="actions">${extraButtons}<button type="button" class="btn primary" data-bact="save">저장</button>${afterButtons}</div></form>`;
 }
 
 async function drawBackup() {
   const st = view._bk;
   const b = view._settings.backup;
+  const remotes = ["ftp", "webdav"].filter((k) => b[k].enabled || view._bkAdding.has(k));
   const last = st.last;
   const uploads = last && last.uploads ? Object.entries(last.uploads).map(([k, v]) =>
     `<span class="badge ${v === "성공" ? "ok" : "bad"}" title="${esc(v)}">${k.toUpperCase()} ${v === "성공" ? "성공" : "실패"}</span>`).join("") : "";
@@ -844,9 +960,19 @@ async function drawBackup() {
     <section class="section"><div class="section-head"><h2>백업 설정</h2></div>
       <div class="grid wide">
         ${bkForm("general", "기본", "암호 · 자동 백업 · 보관 개수", BK_GENERAL, b, "")}
-        ${bkForm("ftp", "FTP", "FTP / FTPS 서버", BK_FTP, b.ftp, '<button type="button" class="btn" data-bact="test" data-k="ftp">연결 테스트</button>')}
-        ${bkForm("webdav", "WebDAV", "Synology WebDAV, Nextcloud 등", BK_DAV, b.webdav, '<button type="button" class="btn" data-bact="test" data-k="webdav">연결 테스트</button>')}
       </div></section>
+
+    <section class="section"><div class="section-head"><div><h2>원격 저장소</h2><p>로컬과 함께 백업 파일을 올릴 곳입니다.</p></div>
+      ${remotes.length < 2 ? '<button type="button" class="btn accent" data-bact="add-target">+ 저장소 추가</button>' : ""}</div>
+      ${remotes.length ? `<div class="grid wide">${remotes.map((k) => {
+        const t = BK_TARGETS[k];
+        const isNew = !b[k].enabled;
+        return bkForm(k, t.title, t.sub, t.fields, b[k],
+          '<button type="button" class="btn" data-bact="test" data-k="' + k + '">연결 테스트</button>',
+          isNew ? '<button type="button" class="btn" data-bact="cancel-target" data-k="' + k + '">취소</button>'
+                : '<button type="button" class="btn danger" data-bact="remove-target" data-k="' + k + '">삭제</button>');
+      }).join("")}</div>` : '<div class="empty">지금은 로컬에만 저장합니다. "+ 저장소 추가"로 FTP나 WebDAV에도 함께 올릴 수 있어요.</div>'}
+    </section>
 
     <section class="section"><div class="section-head"><h2>백업 파일</h2>
       <div class="filters" role="group" aria-label="저장 위치">${tabs.map(([k, l]) => `<button type="button" data-btab="${k}" aria-pressed="${k === backupTab}">${l}</button>`).join("")}</div></div>
@@ -865,15 +991,28 @@ async function drawBackup() {
     </section>`;
 }
 
-function readBackupForms() {
+/** 화면의 백업 설정 폼 → 저장할 값. 화면에 없는 저장소는 지금 값(꺼짐 포함)을 그대로 쓴다 */
+function readBackupForms(disable) {
+  const b = view._settings.backup;
   const g = readForm(view.querySelector('form[data-bk="general"]'), BK_GENERAL);
-  const ftp = readForm(view.querySelector('form[data-bk="ftp"]'), BK_FTP);
-  const dav = readForm(view.querySelector('form[data-bk="webdav"]'), BK_DAV);
-  return {
-    ...g, keep_local: Number(g.keep_local) || 14, keep_remote: Number(g.keep_remote) || 30,
-    ftp: { ...ftp, port: Number(ftp.port) || 21 },
-    webdav: dav,
+  const target = (k) => {
+    if (k === disable) return { ...b[k], enabled: false };
+    const f = view.querySelector(`form[data-bk="${k}"]`);
+    if (!f) return b[k];
+    const v = { ...readForm(f, BK_TARGETS[k].fields), enabled: true };
+    if (k === "ftp") v.port = Number(v.port) || 21;
+    return v;
   };
+  return { ...g, keep_local: Number(g.keep_local) || 14, keep_remote: Number(g.keep_remote) || 30,
+    ftp: target("ftp"), webdav: target("webdav") };
+}
+
+function startAddTarget(k) {
+  view._bkAdding.add(k);
+  drawBackup().then(() => {
+    const f = view.querySelector(`form[data-bk="${k}"]`);
+    if (f) { f.scrollIntoView({ behavior: "smooth", block: "start" }); const i = f.querySelector("input:not([type=checkbox])"); if (i) i.focus({ preventScroll: true }); }
+  });
 }
 
 async function restoreDialog(where) {
@@ -903,10 +1042,35 @@ view.addEventListener("click", async (e) => {
   const a = btn.dataset.bact;
   const form = btn.closest("form");
 
+  if (a === "add-target") {
+    const b = view._settings.backup;
+    dlg.innerHTML = `<form method="dialog" class="dlg"><h2>원격 저장소 추가</h2><p>백업 파일을 함께 올릴 곳을 고르세요.</p>
+      <div class="picker">${["ftp", "webdav"].map((k) => {
+        const added = b[k].enabled || view._bkAdding.has(k);
+        return `<button type="button" class="pick" data-add="${k}" ${added ? "disabled" : ""}><b>${BK_TARGETS[k].title}</b><small>${added ? "추가됨" : BK_TARGETS[k].desc}</small></button>`;
+      }).join("")}</div>
+      <div class="dlg-foot"><button class="btn" value="cancel">닫기</button></div></form>`;
+    dlg.showModal();
+    return;
+  }
+  if (a === "cancel-target") { view._bkAdding.delete(btn.dataset.k); await drawBackup(); return; }
+  if (a === "remove-target") {
+    const k = btn.dataset.k;
+    if (!(await confirmBox(`${BK_TARGETS[k].title} 저장소를 삭제할까요?`, "이후 백업부터 이 저장소에 올리지 않습니다. 이미 올라간 백업 파일은 그대로 남습니다.", "삭제"))) return;
+    try {
+      view._settings = await api("/api/settings/backup", { method: "PUT", body: readBackupForms(k) });
+      view._bk = await api("/api/backup");
+      if (backupTab === k) backupTab = "local";
+      await drawBackup();
+      toast(`${BK_TARGETS[k].title} 저장소를 삭제했습니다`);
+    } catch (err) { toast(err.message, true); }
+    return;
+  }
   if (a === "save") {
     btn.disabled = true;
     try {
       view._settings = await api("/api/settings/backup", { method: "PUT", body: readBackupForms() });
+      view._bkAdding = new Set();
       view._bk = await api("/api/backup");
       await drawBackup();
       toast("백업 설정을 저장했습니다");

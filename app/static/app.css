@@ -201,9 +201,29 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 .checks label { display: inline-flex; align-items: center; gap: 8px; min-height: 34px; font-size: 14px; color: var(--text); }
 .checks input { width: 18px; height: 18px; accent-color: var(--accent); }
 .test-result { margin: 0; min-height: 18px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.test-result:empty { display: none; }
 .test-result.ok { color: var(--accent-ink); }
 .test-result.bad { color: var(--bad-ink); }
 .howto code, .section-head code { font-family: var(--mono); font-size: 12px; background: var(--raise); padding: 1px 5px; border-radius: 4px; }
+/* 연결 추가 */
+.type-label { font-size: 11px; font-weight: 600; color: var(--accent-ink); letter-spacing: .02em; }
+.card.conn.editing { border-color: var(--btn-line); }
+.picker-group { display: flex; flex-direction: column; gap: 8px; }
+.picker { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr)); }
+.pick { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-height: 64px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--btn-line); background: var(--raise); color: var(--text); text-align: left; }
+.pick:hover:not([disabled]) { border-color: var(--accent); }
+.pick b { font-size: 15px; }
+.pick small { font-size: 12px; color: var(--faint); }
+.pick[disabled] { opacity: .5; cursor: default; }
+.onboarding { gap: 16px; padding: 22px; }
+dialog .picker { grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr)); }
+details.fold { gap: 0; }
+details.fold > summary { cursor: pointer; list-style: none; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-height: 28px; }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary::before { content: "▸"; color: var(--faint); }
+details.fold[open] > summary::before { content: "▾"; }
+details.fold > summary small { color: var(--faint); font-size: 13px; }
+
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); background: var(--raise); border: 1px solid var(--line); padding: 12px 18px; border-radius: 12px; font-size: 14px; opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 30; max-width: calc(100vw - 32px); }
 .toast.show { opacity: 1; }
 .toast.bad { border-color: var(--bad); }
