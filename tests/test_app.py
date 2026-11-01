@@ -69,6 +69,7 @@ def test_integrations_listed(client):
 
 @respx.mock
 def test_reboot_needs_confirm_and_is_logged(runtime):
+    respx.get("http://hub.test/hub2/hubData").mock(return_value=httpx.Response(200, json={}))
     respx.post("http://hub.test/hub/reboot").mock(return_value=httpx.Response(200))
     c = make_client(Settings(connections=[HUB]), runtime)
     assert c.post("/api/connections/main/actions/reboot", json={}).status_code == 400
@@ -217,3 +218,37 @@ def test_smarthome_overview(runtime):
     assert c.post("/api/smarthome/devices/main/1/on").status_code == 200 and on.called
     assert c.post("/api/smarthome/devices/main/1;x/on").status_code in (400, 404)
     assert c.post("/api/smarthome/devices/nope/1/on").status_code == 404
+
+
+@respx.mock
+def test_hubitat_unreachable_says_why(runtime):
+    """허브에 안 닿으면 여러 요청을 기다리다 '시간 초과'로 끝나지 않고 이유를 바로 알려 준다."""
+    probe = respx.get("http://hub.test/hub2/hubData").mock(side_effect=httpx.ConnectTimeout("x"))
+    c = make_client(Settings(connections=[HUB]), runtime)
+    r = c.post("/api/connections/test", json={"id": "main", "config": {"url": "http://hub.test", "app_id": 7}}).json()
+    assert r["ok"] is False and "연결을 받지 않습니다" in r["message"] and "hub.test" in r["message"]
+    assert probe.call_count == 1 and len(respx.calls) == 1   # 다른 요청은 하지 않음
+    st = c.get("/api/status").json()[0]
+    assert st["online"] is False and "IP 주소가 맞는지" in st["error"]
+
+    probe.mock(side_effect=httpx.ReadTimeout("x"))
+    r = c.post("/api/connections/test", json={"id": "main", "config": {"url": "http://hub.test", "app_id": 7}}).json()
+    assert "연결은 됐지만" in r["message"]
+    probe.mock(side_effect=httpx.ConnectError("refused"))
+    r = c.post("/api/connections/test", json={"id": "main", "config": {"url": "http://hub.test", "app_id": 7}}).json()
+    assert "주소와 포트" in r["message"]
+
+
+@respx.mock
+def test_hubitat_with_hub_login(runtime):
+    """허브 로그인을 켠 허브: 로그인 후 같은 연결로 관리 URL 호출 (예전에는 연결 재사용 오류)."""
+    respx.get("http://hub.test/hub2/hubData").mock(return_value=httpx.Response(200, json={"firmwareVersionString": "2.4.3"}))
+    login = respx.post("http://hub.test/login").mock(return_value=httpx.Response(200))
+    respx.get(url__regex=r"http://hub\.test/hub/advanced/.*").mock(return_value=httpx.Response(200, text="512000"))
+    reboot = respx.post("http://hub.test/hub/reboot").mock(return_value=httpx.Response(200))
+    hub = conn("hubitat", "main", url="http://hub.test", login_user="admin", login_password="pw")
+    c = make_client(Settings(connections=[hub]), runtime)
+    st = c.get("/api/status").json()[0]
+    assert st["online"], st
+    assert c.post("/api/connections/main/actions/reboot", json={"confirm": True}).status_code == 200
+    assert login.call_count == 2 and reboot.call_count == 1

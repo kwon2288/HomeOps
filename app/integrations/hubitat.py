@@ -60,13 +60,13 @@ class HubitatHub(Integration):
     async def test(self) -> str:
         h = self._hub()
         parts = []
+        st = await h.status()   # 허브에 닿는지부터 (안 닿으면 이유를 알려 주고 끝)
         if self.cfg.get("app_id"):
             try:
                 devices = await h.devices()
                 parts.append(f"Maker API 기기 {len(devices)}개")
             except Exception as exc:  # noqa: BLE001
                 raise ConnectorError(f"Maker API: {describe(exc)}") from exc
-        st = await h.status()
         if st["free_memory_kb"] is not None or st["temperature_c"] is not None:
             parts.append("허브 관리 정보 확인됨" + (f" · 펌웨어 {st['firmware']}" if st["firmware"] else ""))
         elif not self.cfg.get("app_id"):

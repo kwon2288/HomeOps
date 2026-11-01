@@ -95,7 +95,7 @@ async def _before_save(request: Request, conn: ConnectionCfg) -> ConnectionCfg:
     try:
         conn.config = await asyncio.wait_for(instance(request, conn).before_save(), STATUS_TIMEOUT)
     except asyncio.TimeoutError as exc:
-        raise HTTPException(502, "응답 시간 초과") from exc
+        raise HTTPException(502, f"{STATUS_TIMEOUT}초 안에 끝나지 않았습니다 (장비가 느리거나 연결되지 않음)") from exc
     except ConnectorError as exc:
         raise HTTPException(400, str(exc)) from exc
     except HTTPException:
@@ -147,7 +147,7 @@ async def test_connection(request: Request, body: dict = Body(...)) -> dict:
     try:
         return {"ok": True, "message": await asyncio.wait_for(instance(request, conn).test(), STATUS_TIMEOUT)}
     except asyncio.TimeoutError:
-        return {"ok": False, "message": "응답 시간 초과"}
+        return {"ok": False, "message": f"{STATUS_TIMEOUT}초 안에 끝나지 않았습니다 (장비가 느리거나 연결되지 않음)"}
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "message": describe(exc)}
 
@@ -164,7 +164,7 @@ async def _status_one(request: Request, conn: ConnectionCfg) -> dict:
         crd = await asyncio.wait_for(instance(request, conn).status(), STATUS_TIMEOUT)
         return {**base, "online": crd.get("online", True), "error": None, "card": crd}
     except asyncio.TimeoutError:
-        return {**base, "online": False, "error": "응답 시간 초과", "card": None}
+        return {**base, "online": False, "error": f"{STATUS_TIMEOUT}초 안에 끝나지 않았습니다 (장비가 느리거나 연결되지 않음)", "card": None}
     except Exception as exc:  # noqa: BLE001 - 한 시스템이 죽어도 화면은 뜨게
         return {**base, "online": False, "error": describe(exc), "card": None}
 

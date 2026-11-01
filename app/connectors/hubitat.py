@@ -5,7 +5,10 @@
 """
 from __future__ import annotations
 
+import asyncio
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -17,6 +20,7 @@ from .base import ConnectorError, make_client
 
 SAFE_COMMAND = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,40}$")
 SAFE_ID = re.compile(r"^\d{1,8}$")
+PROBE_TIMEOUT = httpx.Timeout(8.0, connect=4.0)
 
 
 class Hubitat:
@@ -24,14 +28,31 @@ class Hubitat:
         self.cfg = cfg
         self.base = cfg.url.rstrip("/")
 
-    async def _client(self) -> httpx.AsyncClient:
-        client = make_client()
-        if self.cfg.login:
-            await client.post(
-                f"{self.base}/login",
-                data={"username": self.cfg.login.username, "password": self.cfg.login.password, "submit": "Login"},
-            )
-        return client
+    @asynccontextmanager
+    async def _session(self) -> AsyncIterator[httpx.AsyncClient]:
+        """허브에 닿는지 확인하고, 허브 로그인을 켰으면 로그인까지 한 연결."""
+        async with make_client() as client:
+            await self._probe(client)
+            if self.cfg.login:
+                await client.post(
+                    f"{self.base}/login",
+                    data={"username": self.cfg.login.username, "password": self.cfg.login.password, "submit": "Login"},
+                )
+            yield client
+
+    async def _probe(self, c: httpx.AsyncClient) -> httpx.Response:
+        """허브에 닿는지 먼저 짧게 확인한다. 안 닿으면 여러 요청을 기다리지 않고 바로 이유를 알려 준다."""
+        host = self.base.split("://", 1)[-1]
+        try:
+            return await c.get(f"{self.base}/hub2/hubData", timeout=PROBE_TIMEOUT)
+        except httpx.ConnectTimeout as exc:
+            raise ConnectorError(f"허브({host})가 {PROBE_TIMEOUT.connect:.0f}초 안에 연결을 받지 않습니다 — IP 주소가 맞는지, "
+                                 "허브가 켜져 있는지, HomeOps가 그 네트워크에 닿는지 확인하세요") from exc
+        except httpx.ConnectError as exc:
+            raise ConnectorError(f"허브({host})에 연결할 수 없습니다 — 주소와 포트를 확인하세요") from exc
+        except httpx.TimeoutException as exc:
+            raise ConnectorError(f"허브({host})에 연결은 됐지만 {PROBE_TIMEOUT.read:.0f}초 동안 응답이 없습니다 — "
+                                 "허브가 재시작 중이거나 매우 바쁜 상태일 수 있습니다") from exc
 
     def _maker(self, path: str) -> tuple[str, dict[str, str]]:
         if not self.cfg.maker_api:
@@ -64,28 +85,36 @@ class Hubitat:
             "online": False, "free_memory_kb": None, "temperature_c": None, "database_mb": None,
             "firmware": None, "device_count": None,
         }
-        async with await self._client() as c:
-            mem = self._num(await self._text(c, f"{self.base}/hub/advanced/freeOSMemory"))
-            temp = self._num(await self._text(c, f"{self.base}/hub/advanced/internalTempCelsius"))
-            db = self._num(await self._text(c, f"{self.base}/hub/advanced/databaseSize"))
+        async with self._session() as c:   # 여기서 허브에 안 닿으면 바로 이유와 함께 실패
+            async def fw() -> None:
+                try:
+                    r = await c.get(f"{self.base}/hub2/hubData")
+                    if r.status_code == 200 and r.headers.get("content-type", "").startswith("application/json"):
+                        data = r.json()
+                        out["firmware"] = data.get("firmwareVersionString") or data.get("version")
+                except (httpx.HTTPError, ValueError):
+                    pass
+
+            async def count() -> None:
+                if not self.cfg.maker_api:
+                    return
+                try:
+                    out["device_count"] = len(await self._devices_raw(c))
+                except (httpx.HTTPError, ConnectorError, ValueError):
+                    pass
+
+            # 여러 요청을 한꺼번에 (하나씩 기다리면 느린 허브에서 전체 시간 초과가 남)
+            mem, temp, db, *_ = await asyncio.gather(
+                self._text(c, f"{self.base}/hub/advanced/freeOSMemory"),
+                self._text(c, f"{self.base}/hub/advanced/internalTempCelsius"),
+                self._text(c, f"{self.base}/hub/advanced/databaseSize"),
+                fw(), count(),
+            )
+            mem, temp, db = self._num(mem), self._num(temp), self._num(db)
             out["free_memory_kb"] = int(mem) if mem is not None else None
             out["temperature_c"] = temp
             out["database_mb"] = db
-            try:
-                r = await c.get(f"{self.base}/hub2/hubData")
-                if r.status_code == 200 and r.headers.get("content-type", "").startswith("application/json"):
-                    data = r.json()
-                    out["firmware"] = data.get("firmwareVersionString") or data.get("version")
-            except (httpx.HTTPError, ValueError):
-                pass
-            out["online"] = any(v is not None for v in (mem, temp, db))
-            if self.cfg.maker_api:
-                try:
-                    devices = await self._devices_raw(c)
-                    out["device_count"] = len(devices)
-                    out["online"] = True
-                except (httpx.HTTPError, ConnectorError):
-                    pass
+            out["online"] = any(v is not None for v in (mem, temp, db)) or out["device_count"] is not None
         return out
 
     async def _devices_raw(self, c: httpx.AsyncClient) -> list[dict[str, Any]]:
@@ -132,13 +161,13 @@ class Hubitat:
         return out
 
     async def reboot(self) -> None:
-        async with await self._client() as c:
+        async with self._session() as c:
             r = await c.post(f"{self.base}/hub/reboot")
             r.raise_for_status()
 
     async def backup(self, backup_dir: Path, keep: int) -> dict[str, Any]:
         backup_dir.mkdir(parents=True, exist_ok=True)
-        async with await self._client() as c:
+        async with self._session() as c:
             c.timeout = httpx.Timeout(180.0)
             r = await c.get(f"{self.base}/hub/backupDB", params={"fileName": "latest"})
             r.raise_for_status()
