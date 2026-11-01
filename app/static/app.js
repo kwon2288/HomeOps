@@ -1107,7 +1107,7 @@ view.addEventListener("click", async (e) => {
 });
 
 /* ---------- 라우팅 ---------- */
-const ROUTES = { infra: renderInfra, hubs: renderHubs, integration: renderIntegration, log: renderLog, settings: renderSettings, backup: renderBackup, update: () => renderUpdate() };
+const ROUTES = { infra: renderInfra, hubs: renderHubs, integration: renderIntegration, log: renderLog, settings: renderSettings, backup: renderBackup, update: () => renderUpdate(true) };  // 업데이트 화면은 열 때마다 GitHub 확인
 
 async function route() {
   const name = (location.hash.replace(/^#\/?/, "") || "integration").split("?")[0];

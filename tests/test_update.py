@@ -28,7 +28,15 @@ README = f"""# HomeOps
 """
 
 
+SHA = "a" * 40
+
+
 def mock_github(version="99.1.0"):
+    respx.get("https://api.github.com/repos/kwon2288/HomeOps/commits/main").mock(return_value=httpx.Response(200, text=SHA))
+    raw = f"https://raw.githubusercontent.com/kwon2288/HomeOps/{SHA}"
+    respx.get(f"{raw}/app/__init__.py").mock(return_value=httpx.Response(200, text=f'VERSION = "{version}"\n'))
+    respx.get(f"{raw}/README.md").mock(return_value=httpx.Response(200, text=README))
+    # API 를 못 쓸 때 쓰는 브랜치 주소
     respx.get(f"{RAW}/app/__init__.py").mock(return_value=httpx.Response(200, text=f'VERSION = "{version}"\n'))
     respx.get(f"{RAW}/README.md").mock(return_value=httpx.Response(200, text=README))
 
@@ -80,7 +88,7 @@ def test_check_status(client, monkeypatch):
 def test_check_failure_keeps_last_known(client):
     mock_github()
     client.get("/api/update")
-    respx.get(f"{RAW}/app/__init__.py").mock(side_effect=httpx.ConnectError("down"))
+    respx.get(f"https://raw.githubusercontent.com/kwon2288/HomeOps/{SHA}/app/__init__.py").mock(side_effect=httpx.ConnectError("down"))
     st = client.get("/api/update?refresh=1").json()
     assert st["latest"] == "99.1.0" and "GitHub에 연결하지 못했습니다" in st["error"]
 
@@ -143,3 +151,14 @@ def test_docker_apply_rejects_bad_download(client, monkeypatch, tmp_path):
     job = client.get("/api/update").json()["job"]
     assert job["state"] == "failed" and "새롭지 않습니다" in job["log"]
     assert not (tmp_path / "code").exists()
+
+
+@respx.mock
+def test_check_uses_latest_commit_and_falls_back(client):
+    """방금 올린 버전도 바로 보이도록 커밋 기준으로 확인. API 한도에 걸리면 브랜치 주소로."""
+    mock_github("99.1.0")
+    respx.get(f"{RAW}/app/__init__.py").mock(return_value=httpx.Response(200, text='VERSION = "0.0.1"\n'))  # 묵은 캐시
+    assert client.get("/api/update?refresh=1").json()["latest"] == "99.1.0"
+    respx.get("https://api.github.com/repos/kwon2288/HomeOps/commits/main").mock(return_value=httpx.Response(403))
+    respx.get(f"{RAW}/app/__init__.py").mock(return_value=httpx.Response(200, text='VERSION = "99.2.0"\n'))
+    assert client.get("/api/update?refresh=1").json()["latest"] == "99.2.0"

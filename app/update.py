@@ -35,7 +35,7 @@ from .core import Confirm, Ctx, ctx, require_confirm
 log = logging.getLogger("homeops.update")
 router = APIRouter(prefix="/api/update", tags=["update"], dependencies=[Depends(require_user)])
 
-CHECK_TTL = 6 * 3600          # 자동 확인 간격
+CHECK_TTL = 3600              # 왼쪽 아래 '새 버전' 표시용 자동 확인 간격 (업데이트 화면은 열 때마다 확인)
 HELPER_UNIT = Path("/etc/systemd/system/homeops-update.path")
 LEGACY_UPDATER = Path("/usr/local/bin/homeops-update")
 MAX_TARBALL = 50 * 1024 * 1024
@@ -124,10 +124,19 @@ async def check(c: Ctx, force: bool = False) -> dict[str, Any]:
     cached = _cached(c)
     if not force and cached and time.time() - cached.get("ts", 0) < CHECK_TTL:
         return cached
-    base = f"https://raw.githubusercontent.com/{repo()}/{branch()}"
     result: dict[str, Any] = {"ts": time.time(), "checked_at": datetime.now().astimezone().isoformat(timespec="seconds")}
     try:
         async with httpx.AsyncClient(timeout=10, headers=_headers(), follow_redirects=True) as h:
+            # 브랜치 이름으로 받으면 GitHub가 최대 5분 묵은 파일을 줄 수 있어서, 최신 커밋을 먼저 알아내 그 커밋으로 받는다
+            ref = branch()
+            try:
+                r = await h.get(f"https://api.github.com/repos/{repo()}/commits/{branch()}",
+                                headers={"Accept": "application/vnd.github.sha"})
+                if r.status_code == 200 and re.fullmatch(r"[0-9a-f]{40}", r.text.strip()):
+                    ref = r.text.strip()
+            except httpx.HTTPError:
+                pass  # API 한도 초과 등 — 브랜치 이름으로 받는다
+            base = f"https://raw.githubusercontent.com/{repo()}/{ref}"
             ver, readme = await asyncio.gather(h.get(f"{base}/app/__init__.py"), h.get(f"{base}/README.md"))
         if ver.status_code == 404:
             raise RuntimeError(f"저장소를 찾을 수 없습니다 ({repo()} · {branch()}). 비공개라면 HOMEOPS_GITHUB_TOKEN 을 지정하세요")
