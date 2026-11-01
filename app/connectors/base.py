@@ -15,9 +15,9 @@ def describe(exc: Exception) -> str:
     if isinstance(exc, ConnectorError):
         return str(exc)
     if isinstance(exc, httpx.ConnectTimeout):
-        return "연결 시간 초과 — 주소가 맞는지, 장비가 켜져 있는지, HomeOps가 그 네트워크에 닿는지 확인하세요"
+        return f"연결 시간 초과{_where(exc)} — 주소가 맞는지, 장비가 켜져 있는지, HomeOps가 그 네트워크에 닿는지 확인하세요"
     if isinstance(exc, httpx.TimeoutException):
-        return "응답 시간 초과 — 연결은 됐지만 응답이 오지 않습니다 (장비가 바쁘거나 재시작 중)"
+        return f"응답 시간 초과{_where(exc)} — 연결은 됐지만 {_secs(exc)}안에 응답이 오지 않았습니다"
     if isinstance(exc, httpx.ConnectError):
         return "연결할 수 없음 — 주소와 포트를 확인하세요"
     if isinstance(exc, httpx.HTTPStatusError):
@@ -26,3 +26,19 @@ def describe(exc: Exception) -> str:
             return f"인증 실패 (HTTP {code})"
         return f"HTTP {code}"
     return type(exc).__name__
+
+
+def _where(exc: httpx.HTTPError) -> str:
+    """어느 요청이 실패했는지 (주소의 경로만, 토큰 같은 쿼리는 빼고)."""
+    try:
+        return f" ({exc.request.url.path})"
+    except RuntimeError:  # 요청 정보가 없는 예외
+        return ""
+
+
+def _secs(exc: httpx.HTTPError) -> str:
+    try:
+        read = exc.request.extensions.get("timeout", {}).get("read")
+        return f"{read:g}초 " if read else ""
+    except RuntimeError:
+        return ""

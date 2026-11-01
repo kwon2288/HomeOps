@@ -202,6 +202,7 @@ def test_smarthome_overview(runtime):
     respx.get(f"{api}/modes").mock(return_value=httpx.Response(200, json=[
         {"id": 1, "name": "Home", "active": False}, {"id": 2, "name": "Away", "active": True}]))
     respx.get(f"{api}/hsm").mock(return_value=httpx.Response(200, json={"hsm": "armedAway"}))
+    respx.get(f"{api}/devices").mock(return_value=httpx.Response(200, json=[{"id": "1"}, {"id": "2"}, {"id": "3"}]))
     respx.get(url__regex=r"http://hub\.test/hub.*").mock(return_value=httpx.Response(404))
     on = respx.get(f"{api}/devices/1/on").mock(return_value=httpx.Response(200, json={}))
 
@@ -252,3 +253,28 @@ def test_hubitat_with_hub_login(runtime):
     assert st["online"], st
     assert c.post("/api/connections/main/actions/reboot", json={"confirm": True}).status_code == 200
     assert login.call_count == 2 and reboot.call_count == 1
+
+
+@respx.mock
+def test_slow_device_list_names_request_and_keeps_last(runtime):
+    """/devices/all 이 느리면 어느 요청이 늦었는지 알려 주고, 마지막으로 받은 목록을 계속 보여 준다."""
+    from app.routers import smarthome
+    smarthome._last_devices.clear()
+    api = "http://hub.test/apps/api/7"
+    full = respx.get(f"{api}/devices/all").mock(return_value=httpx.Response(200, json=[
+        {"id": "1", "label": "거실등", "attributes": {"switch": "off"}, "commands": ["on", "off"]}]))
+    respx.get(f"{api}/devices").mock(return_value=httpx.Response(200, json=[{"id": "1"}]))
+    respx.get(url__regex=r"http://hub\.test/(hub|apps/api/7/(modes|hsm)).*").mock(return_value=httpx.Response(404))
+    c = make_client(Settings(connections=[HUB]), runtime)
+    assert len(c.get("/api/smarthome").json()["devices"]) == 1
+
+    full.mock(side_effect=httpx.ReadTimeout("slow", request=httpx.Request("GET", f"{api}/devices/all?access_token=tok",
+                                                                         extensions={"timeout": {"read": 45.0}})))
+    d = c.get("/api/smarthome").json()
+    assert len(d["devices"]) == 1
+    body = next(a["body"] for a in d["alerts"] if a["title"] == "기기 목록 응답이 느림")
+    assert "/apps/api/7/devices/all" in body and "45초" in body and "tok" not in body
+
+    # 연결 테스트 · 상태 카드는 가벼운 /devices 만 쓰므로 영향 없음
+    r = c.post("/api/connections/test", json={"id": "main", "config": {"url": "http://hub.test", "app_id": 7}}).json()
+    assert r["ok"] and "기기 1개" in r["message"]

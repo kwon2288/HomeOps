@@ -21,6 +21,8 @@ from .base import ConnectorError, make_client
 SAFE_COMMAND = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,40}$")
 SAFE_ID = re.compile(r"^\d{1,8}$")
 PROBE_TIMEOUT = httpx.Timeout(8.0, connect=4.0)
+# /devices/all 은 고른 기기 전체의 속성까지 보내서, 기기가 많은 허브에서는 수십 초 걸리기도 한다
+FULL_LIST_TIMEOUT = httpx.Timeout(45.0, connect=4.0)
 
 
 class Hubitat:
@@ -51,8 +53,8 @@ class Hubitat:
         except httpx.ConnectError as exc:
             raise ConnectorError(f"허브({host})에 연결할 수 없습니다 — 주소와 포트를 확인하세요") from exc
         except httpx.TimeoutException as exc:
-            raise ConnectorError(f"허브({host})에 연결은 됐지만 {PROBE_TIMEOUT.read:.0f}초 동안 응답이 없습니다 — "
-                                 "허브가 재시작 중이거나 매우 바쁜 상태일 수 있습니다") from exc
+            raise ConnectorError(f"허브({host})에 연결은 됐지만 /hub2/hubData 요청에 {PROBE_TIMEOUT.read:.0f}초 동안 "
+                                 "응답이 없습니다") from exc
 
     def _maker(self, path: str) -> tuple[str, dict[str, str]]:
         if not self.cfg.maker_api:
@@ -99,7 +101,7 @@ class Hubitat:
                 if not self.cfg.maker_api:
                     return
                 try:
-                    out["device_count"] = len(await self._devices_raw(c))
+                    out["device_count"] = len(await self.device_ids(c))
                 except (httpx.HTTPError, ConnectorError, ValueError):
                     pass
 
@@ -117,15 +119,24 @@ class Hubitat:
             out["online"] = any(v is not None for v in (mem, temp, db)) or out["device_count"] is not None
         return out
 
-    async def _devices_raw(self, c: httpx.AsyncClient) -> list[dict[str, Any]]:
-        url, params = self._maker("/devices/all")
-        r = await c.get(url, params=params)
+    async def device_ids(self, c: httpx.AsyncClient | None = None) -> list[dict[str, Any]]:
+        """Maker API 의 가벼운 목록 (id · 이름만). 개수 확인 · 연결 테스트용."""
+        url, params = self._maker("/devices")
+        if c is None:
+            async with make_client() as own:
+                r = await own.get(url, params=params)
+        else:
+            r = await c.get(url, params=params)
         r.raise_for_status()
         return r.json()
 
     async def devices(self) -> list[dict[str, Any]]:
+        """속성까지 포함한 전체 목록 (기기 화면용). 느릴 수 있어서 기다리는 시간을 길게."""
+        url, params = self._maker("/devices/all")
         async with make_client() as c:
-            return await self._devices_raw(c)
+            r = await c.get(url, params=params, timeout=FULL_LIST_TIMEOUT)
+            r.raise_for_status()
+            return r.json()
 
     async def command(self, device_id: str, command: str, arg: str | None = None) -> None:
         if not SAFE_ID.match(device_id) or not SAFE_COMMAND.match(command):

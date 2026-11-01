@@ -1,5 +1,6 @@
 """스마트홈 연동: 연동 경로 상태, 통합 기기 목록·제어, 확인 필요 알림."""
 import asyncio
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -13,6 +14,8 @@ from .connections import instance, statuses
 router = APIRouter(prefix="/api/smarthome", tags=["smarthome"], dependencies=[Depends(require_user)])
 # 예전 버전의 상태 확인 대상 표기 → 연결 id
 LEGACY_REFS = {"homeassistant": "home-assistant"}
+DEVICES_TIMEOUT = 50
+_last_devices: dict[str, tuple[float, list]] = {}   # 연결 id → (받은 시각, 기기 목록)
 
 
 def _ref(check_ref: str) -> str:
@@ -27,12 +30,21 @@ async def overview(request: Request) -> dict:
     sources = [x for x in s.connections if (cls := integrations.get(x.type)) and cls.provides_devices]
     bridges = [x for x in s.connections if x.type == "homebridge"]
     errors: list[str] = []
+    stale: list[str] = []
 
     async def devices_of(conn):
         try:
-            return await asyncio.wait_for(instance(request, conn).devices(), 20)
+            lst = await asyncio.wait_for(instance(request, conn).devices(), DEVICES_TIMEOUT)
+            _last_devices[conn.id] = (time.time(), lst)
+            return lst
         except Exception as exc:  # noqa: BLE001
-            errors.append(f"{conn.name}: {describe(exc)}")
+            msg = f"{DEVICES_TIMEOUT}초 안에 끝나지 않았습니다" if isinstance(exc, asyncio.TimeoutError) else describe(exc)
+            cached = _last_devices.get(conn.id)
+            if cached:  # 한 번 느렸다고 기기가 다 사라지지 않게, 마지막으로 받은 목록을 보여 준다
+                mins = max(1, round((time.time() - cached[0]) / 60))
+                stale.append(f"{conn.name}: {msg} · {mins}분 전에 받은 목록을 보여 줍니다")
+                return cached[1]
+            errors.append(f"{conn.name}: {msg}")
             return []
 
     async def names_of(conn):
@@ -96,6 +108,8 @@ async def overview(request: Request) -> dict:
                        "body": ", ".join(d["label"] for d in opened[:8])})
     for err in errors:
         alerts.append({"kind": "down", "title": "기기 목록을 가져오지 못함", "body": err})
+    for msg in stale:
+        alerts.append({"kind": "warn", "title": "기기 목록 응답이 느림", "body": msg})
 
     return {
         "mode": mh.get("mode"), "hsm": mh.get("hsm"),

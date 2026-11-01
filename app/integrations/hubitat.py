@@ -63,7 +63,7 @@ class HubitatHub(Integration):
         st = await h.status()   # 허브에 닿는지부터 (안 닿으면 이유를 알려 주고 끝)
         if self.cfg.get("app_id"):
             try:
-                devices = await h.devices()
+                devices = await h.device_ids()
                 parts.append(f"Maker API 기기 {len(devices)}개")
             except Exception as exc:  # noqa: BLE001
                 raise ConnectorError(f"Maker API: {describe(exc)}") from exc
