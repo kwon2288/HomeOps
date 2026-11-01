@@ -14,7 +14,9 @@ PORT="${HOMEOPS_PORT:-8080}"
 SERVICE=/etc/systemd/system/homeops.service
 SKIP_SYSTEMD="${SKIP_SYSTEMD:-0}"   # 테스트용
 
-say() { printf '\033[1;36m▶ %s\033[0m\n' "$*"; }
+say() {  # 터미널이면 색을 넣고, 웹 업데이트 기록(파일)에는 글자만
+  if [ -t 1 ]; then printf '\033[1;36m▶ %s\033[0m\n' "$*"; else printf '▶ %s\n' "$*"; fi
+}
 
 if [ "$(id -u)" != "0" ]; then
   echo "root로 실행하세요 (sudo $0)" >&2
@@ -43,15 +45,45 @@ python3 -m venv "$APP_DIR/.venv"
 "$APP_DIR/.venv/bin/pip" install -q --upgrade pip
 "$APP_DIR/.venv/bin/pip" install -q -r "$APP_DIR/requirements.txt"
 
-cat > /usr/local/bin/homeops-update <<EOF
+# 스크립트는 임시 파일에 쓴 뒤 바꿔 넣는다 (실행 중인 스크립트를 덮어쓰지 않도록)
+put_script() {  # put_script <경로>  (내용은 표준 입력)
+  local tmp="$1.new.$$"
+  cat > "$tmp"
+  chmod 755 "$tmp"
+  mv -f "$tmp" "$1"
+}
+
+put_script /usr/local/bin/homeops-update <<EOF
 #!/usr/bin/env bash
 # HomeOps 최신 버전으로 업데이트
 set -euo pipefail
 cd "$APP_DIR"
 git pull --ff-only
-exec "$APP_DIR/install.sh"
+# 처음 설치할 때 쓴 데이터 폴더와 포트를 그대로 유지
+HOMEOPS_DATA="$DATA_DIR" HOMEOPS_PORT="$PORT" exec "$APP_DIR/install.sh"
 EOF
-chmod 755 /usr/local/bin/homeops-update
+
+# 웹 화면의 [업데이트] 버튼 → 데이터 폴더의 update/request → root 로 homeops-update 실행
+UPD_DIR="$DATA_DIR/update"
+mkdir -p "$UPD_DIR"
+chown homeops:homeops "$UPD_DIR"
+chmod 755 "$UPD_DIR"
+put_script /usr/local/bin/homeops-update-web <<EOF
+#!/usr/bin/env bash
+# homeops-update.path 가 실행한다. 웹에서 요청한 업데이트를 처리하고 진행 기록을 남긴다.
+set -u
+D="$UPD_DIR"
+[ -f "\$D/request" ] || exit 0
+ACTION="\$(head -c 20 "\$D/request" | tr -dc a-z)"
+rm -f "\$D/request"
+[ "\$ACTION" = "update" ] || exit 0
+rm -f "\$D/finished"
+echo running > "\$D/state"
+date -Is > "\$D/started"
+if /usr/local/bin/homeops-update > "\$D/update.log" 2>&1; then echo ok > "\$D/state"; else echo failed > "\$D/state"; fi
+date -Is > "\$D/finished"
+chmod 644 "\$D"/state "\$D"/started "\$D"/finished "\$D"/update.log 2>/dev/null || true
+EOF
 
 if [ "$SKIP_SYSTEMD" = "1" ]; then
   say "SKIP_SYSTEMD=1 — 서비스 등록은 건너뜀"
@@ -70,6 +102,7 @@ User=homeops
 Group=homeops
 WorkingDirectory=$APP_DIR
 Environment=HOMEOPS_DATA=$DATA_DIR
+Environment=HOMEOPS_INSTALL=lxc
 EnvironmentFile=-/etc/default/homeops
 ExecStart=$APP_DIR/.venv/bin/uvicorn app.main:get_app --factory --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips *
 Restart=on-failure
@@ -87,8 +120,31 @@ CapabilityBoundingSet=CAP_NET_RAW
 WantedBy=multi-user.target
 EOF
 
+cat > /etc/systemd/system/homeops-update.service <<EOF
+[Unit]
+Description=HomeOps 웹 업데이트 처리
+
+[Service]
+Type=oneshot
+Environment=HOME=/root
+ExecStart=/usr/local/bin/homeops-update-web
+TimeoutStartSec=20min
+EOF
+
+cat > /etc/systemd/system/homeops-update.path <<EOF
+[Unit]
+Description=HomeOps 웹 업데이트 요청 감시
+
+[Path]
+PathExists=$UPD_DIR/request
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 systemctl daemon-reload
 systemctl enable --now homeops >/dev/null 2>&1 || true
+systemctl enable --now homeops-update.path >/dev/null 2>&1 || true
 systemctl restart homeops
 
 for _ in $(seq 1 20); do
@@ -96,7 +152,7 @@ for _ in $(seq 1 20); do
     IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
     say "완료: http://${IP:-<LXC IP>}:$PORT 에 접속하세요"
     echo "  상태 확인: systemctl status homeops   로그: journalctl -u homeops -f"
-    echo "  업데이트:  homeops-update"
+    echo "  업데이트:  웹 화면 왼쪽 아래 버전 → 업데이트 (또는 homeops-update)"
     exit 0
   fi
   sleep 1

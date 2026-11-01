@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 import asyncio
 from contextlib import asynccontextmanager
 
-from . import VERSION, auth
+from . import VERSION, auth, update
 from .backup import service as backup_service
 from .config import Runtime, Settings, load_runtime
 from .core import Ctx, ctx
@@ -61,6 +61,7 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
     app.include_router(smarthome.router)
     app.include_router(settings_router.router)
     app.include_router(backup_router.router)
+    app.include_router(update.router)
 
     @app.get("/api/health")
     def health() -> dict:

@@ -2,7 +2,8 @@ FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    HOMEOPS_DATA=/app/data
+    HOMEOPS_DATA=/app/data \
+    HOMEOPS_INSTALL=docker
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends iputils-ping \

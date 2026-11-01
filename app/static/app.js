@@ -131,7 +131,7 @@ $("#setup-form").addEventListener("submit", async (e) => {
   try {
     await api("/api/auth/setup", { method: "POST", body: { username: f.username.value.trim(), password: f.password.value } });
     f.password.value = ""; f.password2.value = "";
-    showApp();
+    showApp(); checkUpdateQuietly();
     location.hash = "#/settings";
     route();
     toast("계정을 만들었습니다. 이제 허브와 서버를 연결하세요");
@@ -147,7 +147,7 @@ $("#login-form").addEventListener("submit", async (e) => {
   try {
     await api("/api/auth/login", { method: "POST", body: { username: f.username.value, password: f.password.value } });
     f.password.value = "";
-    showApp();
+    showApp(); checkUpdateQuietly();
     route();
   } catch (err) {
     $("#login-err").textContent = err.message;
@@ -571,7 +571,8 @@ function drawSettings() {
     </details>
 
     <div class="chips"><a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="#/backup">백업 · 복구</a>
-      <a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="#/log">작업 기록</a></div>`;
+      <a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="#/log">작업 기록</a>
+      <a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="#/update">업데이트</a></div>`;
 }
 
 let newSeq = 0;
@@ -1007,8 +1008,106 @@ view.addEventListener("click", async (e) => {
   }
 });
 
+/* ---------- 업데이트 ---------- */
+let updTimer = null;
+
+function setVersionLabel(current, available, latest) {
+  const el = $("#app-version");
+  if (!el) return;
+  el.innerHTML = `HomeOps v${esc(current)}${available ? `<span class="new" title="v${esc(latest)}">새 버전</span>` : ""}`;
+}
+
+function mdInline(t) {
+  return esc(t).replace(/\*\*(.+?)\*\*/g, "<b>$1</b>").replace(/`(.+?)`/g, "<code>$1</code>");
+}
+
+const UPD_STATE = { queued: "준비 중", running: "업데이트 중", restarting: "다시 시작하는 중", ok: "완료", failed: "실패" };
+
+async function renderUpdate(refresh = false) {
+  const st = await api(`/api/update${refresh ? "?refresh=1" : ""}`);
+  view._upd = st;
+  setVersionLabel(st.current, st.available, st.latest);
+  const job = st.job;
+  const busy = job && ["queued", "running", "restarting"].includes(job.state);
+  const howto = { lxc: "LXC (install.sh)", docker: "Docker", manual: "직접 실행" }[st.mode];
+
+  const changes = st.changelog.length ? st.changelog.map((c) => `
+      <div class="row" style="flex-direction:column;align-items:stretch;gap:8px"><b>v${esc(c.version)}${c.date ? ` <small class="muted">${esc(c.date)}</small>` : ""}</b>
+      <ul class="changes">${c.items.map((i) => `<li class="${i.sub ? "sub" : ""}">${mdInline(i.text)}</li>`).join("")}</ul></div>`).join("")
+    : "";
+
+  let action = "";
+  if (busy) action = `<span class="badge warn">${UPD_STATE[job.state]}…</span>`;
+  else if (st.available && st.can_update) action = '<button class="btn primary" data-uact="apply">지금 업데이트</button>';
+
+  view.innerHTML = `
+    <header class="page-head"><div><h1>업데이트</h1><p>GitHub(${esc(st.repo)} · ${esc(st.branch)})에 올라온 새 버전을 확인하고 이 화면에서 바로 업데이트합니다.</p></div>
+      <div class="chips"><button class="btn" data-uact="check" ${busy ? "disabled" : ""}>다시 확인</button>${action}</div></header>
+
+    ${st.error ? `<div class="alert warn"><span class="ico" aria-hidden="true">!</span><div><b>새 버전을 확인하지 못했습니다</b><p>${esc(st.error)}</p></div></div>` : ""}
+    ${st.available && !st.can_update ? `<div class="alert warn"><span class="ico" aria-hidden="true">!</span><div><b>이번 한 번은 직접 업데이트해야 합니다</b><p>${esc(st.hint)}</p></div></div>` : ""}
+
+    <div class="grid wide">
+      <section class="card"><div class="card-title"><h2>지금 버전</h2></div>
+        <p class="ver-big">v${esc(st.current)}</p><small class="muted">설치 방식: ${esc(howto)}</small></section>
+      <section class="card"><div class="card-title"><h2>최신 버전</h2></div>
+        <p class="ver-big">${st.latest ? `v${esc(st.latest)}` : "—"} ${st.latest ? `<span class="badge ${st.available ? "warn" : "ok"}">${st.available ? "새 버전 있음" : "최신"}</span>` : ""}</p>
+        <small class="muted">${st.checked_at ? `확인: ${esc(new Date(st.checked_at).toLocaleString("ko-KR"))}` : ""}</small></section>
+    </div>
+
+    ${job && (busy || job.state === "failed" || job.log) ? `<section class="card"><div class="card-title"><h2>진행 상황 <span class="badge ${job.state === "failed" ? "bad" : job.state === "ok" ? "ok" : "warn"}">${UPD_STATE[job.state] || esc(job.state)}</span></h2>
+      <small>${job.started ? `시작 ${esc(new Date(job.started).toLocaleString("ko-KR"))}` : ""}${job.finished ? ` · 끝 ${esc(new Date(job.finished).toLocaleString("ko-KR"))}` : ""}</small></div>
+      ${job.log ? `<pre class="upd-log" id="upd-log">${esc(job.log)}</pre>` : '<p class="muted" style="margin:0">곧 시작합니다…</p>'}</section>` : ""}
+
+    ${changes ? `<section class="section"><div class="section-head"><h2>바뀌는 점</h2></div><section class="card" style="gap:0">${changes}</section></section>` : ""}
+
+    <p class="muted" style="margin:0;font-size:13px">업데이트하는 동안 1~2분쯤 화면이 끊깁니다. 백업 암호를 정해 두었다면 시작 전에 자동으로 백업합니다 (백업 · 복구 화면의 <i>before-update</i> 파일). 연결 설정과 데이터는 그대로 유지됩니다.</p>`;
+  const lg = $("#upd-log");
+  if (lg) lg.scrollTop = lg.scrollHeight;
+  clearTimeout(updTimer);
+  if (busy) updTimer = setTimeout(() => pollUpdate(st.current), 2000);
+}
+
+/** 업데이트 중: 서버가 다시 뜨고 버전이 바뀔 때까지 지켜본다 */
+async function pollUpdate(oldVersion) {
+  if (view.dataset.route !== "update") return;
+  try {
+    const h = await (await fetch("/api/health", { cache: "no-store" })).json();
+    if (h.version !== oldVersion) {
+      toast(`v${h.version}(으)로 업데이트했습니다`);
+      setTimeout(() => location.reload(), 800);
+      return;
+    }
+    await renderUpdate();
+  } catch (_) {
+    // 다시 시작하는 중이라 응답이 없음
+    updTimer = setTimeout(() => pollUpdate(oldVersion), 2000);
+  }
+}
+
+view.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-uact]");
+  if (!b) return;
+  const st = view._upd;
+  if (b.dataset.uact === "check") {
+    b.disabled = true;
+    try { await renderUpdate(true); toast(view._upd.available ? `새 버전 v${view._upd.latest}이(가) 있습니다` : "최신 버전입니다"); }
+    catch (err) { toast(err.message, true); b.disabled = false; }
+    return;
+  }
+  if (b.dataset.uact === "apply") {
+    if (!await confirmBox(`v${st.latest}(으)로 업데이트`, "1~2분쯤 HomeOps가 다시 시작됩니다. 진행할까요?", "업데이트", false)) return;
+    b.disabled = true;
+    try {
+      const r = await api("/api/update/apply", { method: "POST", body: { confirm: true } });
+      toast(r.message + (r.backup ? " · 백업 완료" : ""));
+      await renderUpdate();
+    } catch (err) { toast(err.message, true); b.disabled = false; }
+  }
+});
+
 /* ---------- 라우팅 ---------- */
-const ROUTES = { infra: renderInfra, hubs: renderHubs, integration: renderIntegration, log: renderLog, settings: renderSettings, backup: renderBackup };
+const ROUTES = { infra: renderInfra, hubs: renderHubs, integration: renderIntegration, log: renderLog, settings: renderSettings, backup: renderBackup, update: () => renderUpdate() };
 
 async function route() {
   const name = (location.hash.replace(/^#\/?/, "") || "integration").split("?")[0];
@@ -1028,12 +1127,18 @@ async function route() {
 window.addEventListener("hashchange", () => { view.innerHTML = ""; route(); view.focus(); });
 
 (async () => {
-  api("/api/health").then((h) => { $("#app-version").textContent = `HomeOps v${h.version}`; }).catch(() => {});
+  api("/api/health").then((h) => setVersionLabel(h.version, false)).catch(() => {});
   try {
     const st = await api("/api/auth/status");
     if (st.needs_setup) { showSetup(); return; }
     await api("/api/auth/me");
     showApp();
     route();
+    checkUpdateQuietly();
   } catch (_) { showLogin(); }
 })();
+
+/** 로그인 후 새 버전이 있으면 왼쪽 아래 버전 옆에 표시 (서버가 6시간마다만 GitHub 확인) */
+function checkUpdateQuietly() {
+  api("/api/update").then((u) => setVersionLabel(u.current, u.available, u.latest)).catch(() => {});
+}

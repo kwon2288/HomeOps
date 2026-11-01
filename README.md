@@ -27,7 +27,7 @@
 | 필요한 것 | Debian 12 / Ubuntu 24.04 LXC 하나 | 이미 쓰는 Docker + Portainer |
 | Docker | 필요 없음 | 기존 것 사용 |
 | 자원 | RAM 약 100MB, 디스크 1GB 미만 | 컨테이너 하나 |
-| 업데이트 | `homeops-update` (끝나면 브라우저에서 새로 고침, 왼쪽 아래 버전으로 확인) | Portainer에서 스택 다시 배포 |
+| 업데이트 | **웹 화면에서** (왼쪽 아래 버전 → 지금 업데이트) | **웹 화면에서** (왼쪽 아래 버전 → 지금 업데이트) |
 
 ### A. LXC에 바로 설치 (Docker 없이)
 
@@ -46,7 +46,7 @@ git clone https://github.com/kwon2288/HomeOps.git /opt/homeops
 
 | 할 일 | 명령 |
 |---|---|
-| 업데이트 | `homeops-update` (끝나면 브라우저에서 새로 고침, 왼쪽 아래 버전으로 확인) |
+| 업데이트 | 웹 화면 왼쪽 아래 버전 → **지금 업데이트** (콘솔에서는 `homeops-update`) |
 | 상태 · 로그 | `systemctl status homeops` · `journalctl -u homeops -f` |
 | 포트 바꾸기 | `HOMEOPS_PORT=9090 /opt/homeops/install.sh` |
 | 환경 변수 추가 | `/etc/default/homeops`에 `HOMEOPS_COOKIE_SECURE=true` 같은 줄 추가 후 `systemctl restart homeops` |
@@ -56,9 +56,23 @@ git clone https://github.com/kwon2288/HomeOps.git /opt/homeops
 1. Portainer → **Stacks → Add stack → Repository**
 2. Repository URL `https://github.com/kwon2288/HomeOps`, Reference `refs/heads/main`, Compose path `docker-compose.yml`
    (비공개 저장소면 Authentication을 켜고 GitHub 아이디와 토큰 입력)
-3. **Deploy the stack**. 업데이트는 같은 스택에서 **Pull and redeploy**
+3. **Deploy the stack**. 업데이트는 웹 화면에서 합니다 (아래 **업데이트** 참고)
 
 명령줄로 할 때는 `git clone` 후 `docker compose up -d --build`. 데이터는 `homeops-data` 볼륨에 저장됩니다.
+
+### 업데이트
+
+새 버전이 나오면 왼쪽 아래 버전 옆에 **새 버전** 표시가 뜹니다 (6시간마다 GitHub 확인). 버전을 누르면 바뀌는 점이 보이고, **지금 업데이트**를 누르면 1~2분 뒤 자동으로 새 화면이 열립니다.
+
+- 백업 암호를 정해 두었다면 업데이트 직전에 자동으로 백업합니다 (`…-before-update.hob`). 문제가 생기면 **백업 · 복구**에서 되돌리세요.
+- 연결 설정과 데이터는 그대로 유지됩니다.
+
+| 설치 방식 | 웹 업데이트가 하는 일 |
+|---|---|
+| A. LXC | root로 도는 `homeops-update.path` 서비스가 요청을 받아 `git pull` + `install.sh`를 실행합니다 (HomeOps 자체는 root 권한이 없음). 기록은 `/var/lib/homeops/update/update.log` |
+| B. Docker | 새 코드를 데이터 볼륨(`code/`)에 받고 컨테이너를 다시 시작합니다. 컨테이너가 뜰 때 이미지보다 새 버전이면 그 코드로 실행하고, 새 코드가 망가져 있으면 이미지에 들어 있는 버전으로 실행합니다. `restart: unless-stopped`가 있어야 다시 뜹니다 |
+
+> **v0.6.1 이하에서 처음 올라올 때 한 번만** 예전 방식으로 업데이트하세요. A는 LXC 콘솔에서 `homeops-update`, B는 Portainer에서 스택을 **Pull and redeploy** (새 `docker-compose.yml`의 `pull_policy: build` 덕분에 이미지를 새로 빌드합니다). 그다음부터는 웹에서 됩니다.
 
 ### 처음 접속
 
@@ -89,7 +103,8 @@ HomeOps 전용 LXC라면 Proxmox에서 그 LXC를 삭제하는 것이 가장 깔
 
 ```bash
 systemctl disable --now homeops
-rm /etc/systemd/system/homeops.service /usr/local/bin/homeops-update
+systemctl disable --now homeops-update.path
+rm /etc/systemd/system/homeops.service /etc/systemd/system/homeops-update.{path,service} /usr/local/bin/homeops-update /usr/local/bin/homeops-update-web
 systemctl daemon-reload
 rm -rf /opt/homeops
 userdel homeops
@@ -158,6 +173,8 @@ rm -rf /var/lib/homeops
 | `HOMEOPS_BACKUP_KEEP` | `10` | Hubitat 백업 파일 보관 개수 (허브별) |
 | `HOMEOPS_SECRET_KEY` | 자동 생성 | 지정하지 않으면 데이터 폴더에 `secret.key`를 만들어 씁니다 |
 | `HOMEOPS_ADMIN_USER` / `HOMEOPS_ADMIN_PASSWORD` | 없음 | 웹 계정 대신 고정 계정을 쓰고 싶을 때만. 지정하면 웹 계정 만들기·비밀번호 변경이 꺼집니다 |
+| `HOMEOPS_REPO` / `HOMEOPS_BRANCH` | `kwon2288/HomeOps` / `main` | 웹 업데이트가 새 버전을 확인할 GitHub 저장소 (포크해서 쓸 때) |
+| `HOMEOPS_GITHUB_TOKEN` | 없음 | 저장소가 비공개일 때 새 버전 확인 · 내려받기에 쓸 토큰 |
 | `HOMEOPS_SEED` | 없음 | 비어 있는 DB에 수동 등록 기기·플랫폼 역할·연동 경로를 미리 넣을 YAML 파일 (`manual_devices`, `platforms`, `integration_paths` 목록) |
 
 ## 개발
@@ -247,10 +264,19 @@ class MyThing(Integration):
 | `GET /api/backup` · `POST /api/backup/run` | 백업 상태·목록 · 지금 백업 |
 | `GET /api/backup/remote/{ftp\|webdav}` · `POST /api/backup/test/{ftp\|webdav}` | 원격 목록 · 연결 테스트 |
 | `POST /api/backup/restore` · `POST /api/backup/restore-upload` | 목록에서 복구 · 파일 올려서 복구 |
+| `GET /api/update` · `POST /api/update/apply` | 새 버전 확인(`?refresh=1`로 바로 확인) · 업데이트 시작 |
 
 위험한 작업(재부팅·종료·중지·재시작)은 본문에 `{"confirm": true}`가 있어야 실행됩니다.
 
 ## 변경 이력
+
+### v0.7.0 — 2026-11-01
+- **웹에서 업데이트**: 왼쪽 아래 버전에 새 버전 표시, 바뀌는 점(이 변경 이력) 보기, **지금 업데이트** 버튼
+  - LXC: root로 도는 `homeops-update.path`가 요청을 받아 `git pull` + `install.sh` 실행. 진행 기록을 화면에서 볼 수 있음
+  - Docker: 새 코드를 데이터 볼륨에 받고 자동으로 다시 시작. 새 코드가 망가졌거나 이미지가 더 새 버전이면 이미지 버전으로 실행
+  - 업데이트 직전 자동 백업 (백업 암호를 정해 둔 경우)
+- `homeops-update`가 처음 설치할 때 쓴 데이터 폴더와 포트를 유지 (전에는 기본값으로 돌아갈 수 있었음)
+- `docker-compose.yml`에 `pull_policy: build` 추가 — Portainer에서 다시 배포할 때 이미지를 새로 빌드
 
 ### v0.6.1 — 2026-11-01
 - **Synology 2단계 인증 계정 지원**: 처음 한 번 OTP 코드를 넣고 저장하면 DSM의 "신뢰할 수 있는 기기"로 등록되어 이후에는 코드 없이 로그인 (DSM 6 · 7)
