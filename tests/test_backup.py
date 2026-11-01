@@ -9,7 +9,7 @@ from app.backup.archive import MAGIC
 from app.config import Runtime, Settings
 from app.store import MASK
 
-from .conftest import make_client
+from .conftest import conn, make_client
 
 BACKUP_PW = "백업암호-1234"
 
@@ -27,7 +27,7 @@ def test_backup_requires_password(client):
 
 
 def test_backup_and_restore_local(runtime):
-    c = make_client(Settings(proxmox={"url": "https://pve.test", "token_id": "a@pve!b", "token_secret": "pve-secret"}), runtime)
+    c = make_client(Settings(connections=[conn("proxmox", "proxmox", url="https://pve.test", token_id="a@pve!b", token_secret="pve-secret")]), runtime)
     assert _setup_backup(c)["password"] == MASK
     c.post("/api/registry/devices", json={"name": "Apple TV 4K", "platform": "HomeKit", "roles": ["HomeKit 홈 허브"]})
 
@@ -53,7 +53,7 @@ def test_backup_and_restore_local(runtime):
     assert r.json()["safety_backup"].endswith("-before-restore.hob")
     names = [d["name"] for d in c.get("/api/registry/devices").json()]
     assert "Apple TV 4K" in names
-    assert c.app.state.ctx.settings.proxmox.token_secret == "pve-secret"
+    assert c.app.state.ctx.settings.conn("proxmox").config["token_secret"] == "pve-secret"
     assert any(a["action"] == "HomeOps 복구" for a in c.get("/api/audit").json())
     assert c.get("/api/backup").json()["last"]["name"] == name  # 백업 기록은 복구 후에도 유지
 
@@ -62,7 +62,7 @@ def test_restore_into_new_install(tmp_path):
     """다른 설치(다른 비밀 키)에 업로드로 복구해도 토큰을 풀 수 있어야 한다."""
     rt1 = Runtime(secret_key="test-secret", cookie_secure=None, db_path=tmp_path / "old" / "homeops.db",
                   backup_dir=tmp_path / "old" / "backups", backup_keep=2)
-    c1 = make_client(Settings(portainer={"url": "https://ptn.test", "api_key": "ptn-key"}), rt1, login=False)
+    c1 = make_client(Settings(connections=[conn("portainer", "portainer", url="https://ptn.test", api_key="ptn-key")]), rt1, login=False)
     c1.post("/api/auth/setup", json={"username": "min", "password": "oldpassword1"})
     _setup_backup(c1)
     name = c1.post("/api/backup/run", json={}).json()["name"]
@@ -76,7 +76,7 @@ def test_restore_into_new_install(tmp_path):
                 headers={"X-Confirm": "yes", "X-Backup-Password": quote(BACKUP_PW)})
     assert r.status_code == 200, r.text
     ctx2 = c2.app.state.ctx
-    assert ctx2.settings.portainer.api_key == "ptn-key"
+    assert ctx2.settings.conn("portainer").config["api_key"] == "ptn-key"
     assert (tmp_path / "new" / "secret.key").read_text() == "test-secret"
     # 비밀 키가 바뀌었으므로 기존 세션은 끊기고, 백업 당시 계정으로 로그인
     assert c2.get("/api/backup").status_code == 401

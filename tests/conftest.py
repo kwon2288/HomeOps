@@ -37,3 +37,8 @@ def make_client(settings: Settings, runtime: Runtime, login: bool = True) -> Tes
 @pytest.fixture
 def client(runtime):
     return make_client(Settings(), runtime)
+
+
+def conn(type_: str, id_: str, name: str | None = None, **config) -> dict:
+    """테스트용 연결 하나."""
+    return {"id": id_, "type": type_, "name": name or id_, "config": config}

@@ -1,6 +1,7 @@
-"""설정 모델(연결 정보)과 실행 환경.
+"""설정 모델과 실행 환경.
 
 연결 정보는 웹 화면(연결 설정)에서 입력하고 SQLite에 저장한다 (store.py).
+아래 HubitatCfg 등은 각 시스템의 API 클라이언트(app/connectors)가 쓰는 형식이다.
 환경 변수는 모두 선택 사항이다.
 """
 from __future__ import annotations
@@ -122,27 +123,25 @@ class BackupCfg(BaseModel):
         return v
 
 
+class ConnectionCfg(BaseModel):
+    """연결 하나. config 의 내용은 연동 플러그인(app/integrations)의 fields 선언을 따른다."""
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,30}$")
+    type: str
+    name: str = Field(min_length=1, max_length=40)
+    config: dict = Field(default_factory=dict)
+
+
 class Settings(BaseModel):
-    hubitat: list[HubitatCfg] = Field(default_factory=list)
-    home_assistant: HomeAssistantCfg | None = None
-    homebridge: HomebridgeCfg | None = None
-    synology: SynologyCfg | None = None
-    proxmox: ProxmoxCfg | None = None
-    portainer: PortainerCfg | None = None
+    connections: list[ConnectionCfg] = Field(default_factory=list)
     alerts: AlertsCfg = Field(default_factory=AlertsCfg)
     backup: BackupCfg = Field(default_factory=BackupCfg)
 
-    def hub(self, hub_id: str) -> HubitatCfg | None:
-        return next((h for h in self.hubitat if h.id == hub_id), None)
+    def conn(self, conn_id: str) -> ConnectionCfg | None:
+        return next((c for c in self.connections if c.id == conn_id), None)
 
 
-# 설정 화면에서 섹션 단위로 저장할 때 쓰는 모델
+# 설정 화면에서 섹션 단위로 저장하는 일반 설정
 SECTION_MODELS: dict[str, type[BaseModel]] = {
-    "home_assistant": HomeAssistantCfg,
-    "homebridge": HomebridgeCfg,
-    "synology": SynologyCfg,
-    "proxmox": ProxmoxCfg,
-    "portainer": PortainerCfg,
     "alerts": AlertsCfg,
     "backup": BackupCfg,
 }

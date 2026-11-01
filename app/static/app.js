@@ -77,7 +77,10 @@ async function formBox(title, fields, values = {}) {
     const v = values[f.name] ?? "";
     const cls = `field${f.full ? " full" : ""}`;
     if (f.type === "textarea") return `<label class="${cls}">${esc(f.label)}<textarea name="${f.name}" rows="3" placeholder="${esc(f.placeholder || "")}">${esc(v)}</textarea></label>`;
-    if (f.type === "select") return `<label class="${cls}">${esc(f.label)}<select name="${f.name}">${f.options.map((o) => `<option ${o === v ? "selected" : ""}>${esc(o)}</option>`).join("")}</select></label>`;
+    if (f.type === "select") return `<label class="${cls}">${esc(f.label)}<select name="${f.name}">${f.options.map((o) => {
+      const [val, text] = Array.isArray(o) ? o : [o, o];
+      return `<option value="${esc(val)}" ${val === v ? "selected" : ""}>${esc(text)}</option>`;
+    }).join("")}</select></label>`;
     if (f.type === "checks") {
       const set = new Set(v || []);
       const extra = [...set].filter((x) => !f.options.includes(x));
@@ -97,28 +100,6 @@ async function formBox(title, fields, values = {}) {
     else out[f.name] = form.elements[f.name].value.trim();
   }
   return out;
-}
-
-/** 버튼 클릭 → 확인 → API 호출 → 새로 고침 */
-async function act(btn, { title, message, path, method = "POST", confirm = true, done = "완료했습니다", reload = true }) {
-  if (confirm && !(await confirmBox(title, message))) return;
-  btn.disabled = true;
-  try {
-    const r = await api(path, { method, body: confirm ? { confirm: true } : {} });
-    const extra = r && r.result && typeof r.result === "string" ? ` (${r.result})` : "";
-    toast(done + extra);
-    if (reload) setTimeout(route, 800);
-  } catch (e) {
-    toast(e.message, true);
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-function statusBadge(sys, okLabel = "온라인") {
-  if (!sys.configured) return '<span class="badge"><span class="dot"></span>연결 전</span>';
-  if (sys.online) return `<span class="badge ok"><span class="dot ok"></span>${okLabel}</span>`;
-  return `<span class="badge bad" title="${esc(sys.error || "")}"><span class="dot bad"></span>오류</span>`;
 }
 
 /* ---------- 로그인 ---------- */
@@ -178,125 +159,109 @@ $("#logout").addEventListener("click", async () => {
   showLogin();
 });
 
-/* ---------- 인프라 ---------- */
-/** 아무것도 연결하지 않았을 때: 바로 추가할 수 있는 종류 버튼 */
+/* ---------- 연동 공통: 종류 목록 · 상태 카드 ---------- */
+let META = null;   // /api/integrations — 연동 종류와 입력 칸 선언
+async function loadMeta() {
+  if (!META) META = await api("/api/integrations");
+  return META;
+}
+const metaOf = (type) => (META || []).find((m) => m.type === type);
+const CATEGORY_LABEL = { infra: "인프라", smarthome: "스마트홈" };
+
+function shortUrl(u) { return String(u || "").replace(/^https?:\/\//, "").replace(/\/$/, ""); }
+
+/** 연동 종류 고르기 버튼들. asLink=true 면 #/settings?add= 로 이동하는 링크 */
+function typeButtons(types, asLink) {
+  return `<div class="picker">${types.map((m) => asLink
+    ? `<a class="pick" href="#/settings?add=${encodeURIComponent(m.type)}"><b>+ ${esc(m.title)}</b><small>${esc(m.desc)}</small></a>`
+    : `<button type="button" class="pick" data-add="${esc(m.type)}"><b>${esc(m.title)}</b><small>${esc(m.desc)}</small></button>`).join("")}</div>`;
+}
+
 function emptyStart(title, desc, types) {
   return `<section class="card onboarding"><div class="card-title"><h2>${esc(title)}</h2><small>${esc(desc)}</small></div>
-    <div class="picker">${types.map((k) => {
-      const t = CONN_TYPES.find((c) => c.key === k);
-      return `<a class="pick" href="#/settings?add=${k}"><b>+ ${esc(t.title)}</b><small>${esc(t.desc)}</small></a>`;
-    }).join("")}</div></section>`;
+    ${typeButtons(types, true)}</section>`;
 }
 
-function addMore(types, configured) {
-  const rest = types.filter((k) => !configured.includes(k) || k === "hubitat");
-  return rest.length ? `<div class="chips">${rest.map((k) => {
-    const t = CONN_TYPES.find((c) => c.key === k);
-    return `<a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="#/settings?add=${k}">+ ${esc(t.title)}</a>`;
-  }).join("")}</div>` : "";
+/** 메뉴 화면의 "+ 연결 추가": 그 메뉴에 해당하는 종류를 골라 연결 설정으로 이동 */
+function openTypePicker(category) {
+  const types = META.filter((m) => !category || m.category === category || m.type === "web");
+  dlg.innerHTML = `<form method="dialog" class="dlg"><h2>${category ? CATEGORY_LABEL[category] + " " : ""}연결 추가</h2>
+    <p>추가할 시스템을 고르세요. 같은 종류도 여러 개 추가할 수 있어요.</p>${typeButtons(types, true)}
+    <div class="dlg-foot"><button class="btn" value="cancel">닫기</button></div></form>`;
+  dlg.showModal();
 }
 
+function actionButton(connId, a, small) {
+  return `<button type="button" class="btn${small ? " sm" : ""}${a.danger ? " danger" : ""}" data-cact="${esc(a.id)}" data-conn="${esc(connId)}"
+    data-params="${esc(JSON.stringify(a.params || {}))}" data-label="${esc(a.label)}" ${a.confirm ? `data-confirm="${esc(a.confirm)}"` : ""}>${esc(a.label)}</button>`;
+}
+
+function statusCard(st) {
+  const m = metaOf(st.type) || { title: st.title };
+  const head = `<div class="card-head"><div class="card-title"><span class="type-label">${esc(m.title)}</span><h2>${esc(st.name)}</h2>
+      <small>${esc(st.card && st.card.summary ? st.card.summary : shortUrl(st.link))}</small></div>
+    ${st.online ? '<span class="badge ok"><span class="dot ok"></span>온라인</span>'
+      : `<span class="badge bad" title="${esc(st.error || "")}"><span class="dot bad"></span>오류</span>`}</div>`;
+  const link = st.link ? `<a class="card-link" href="${esc(st.link)}" target="_blank" rel="noopener noreferrer">웹 화면 열기 ↗</a>` : "";
+  if (!st.card) {
+    return `<section class="card">${head}<div class="empty">연결하지 못했습니다: ${esc(st.error || "")}
+      <br><a href="#/settings">연결 설정</a>에서 주소와 토큰을 확인하세요.</div>${link}</section>`;
+  }
+  const c = st.card;
+  const metrics = c.metrics.length ? `<dl class="metrics">${c.metrics.map((x) => `<div class="metric"><dt>${esc(x.label)}</dt><dd>${esc(x.value)}</dd>
+    ${x.pct !== null && x.pct !== undefined ? bar(x.pct) : ""}</div>`).join("")}</dl>` : "";
+  const sections = c.sections.map((s) => `<div class="rows"><span class="rows-title">${esc(s.title)}</span>
+    ${s.rows.map((r) => `<div class="row"><div class="row-main"><b>${esc(r.name)}</b>${r.note ? `<small>${esc(r.note)}</small>` : ""}</div>
+      ${r.badge ? `<span class="pill ${esc(r.tone)}">${esc(r.badge)}</span>` : ""}
+      ${r.actions.length ? `<div class="row-act">${r.actions.map((a) => actionButton(st.id, a, true)).join("")}</div>` : ""}</div>`).join("")
+      || `<div class="empty" style="margin-top:4px">${esc(s.empty || "항목이 없습니다")}</div>`}</div>`).join("");
+  const actions = c.actions.length ? `<div class="actions">${c.actions.map((a) => actionButton(st.id, a, false)).join("")}</div>` : "";
+  return `<section class="card">${head}${c.note ? `<p class="muted" style="margin:0;font-size:13px">${esc(c.note)}</p>` : ""}${metrics}${sections}${actions}${link}</section>`;
+}
+
+/** 상태 카드 화면 공통 (인프라 · 스마트홈 허브) */
+async function statusGrid(category) {
+  const [list] = await Promise.all([api(`/api/status?category=${category}`), loadMeta()]);
+  return list;
+}
+
+// 상태 카드의 작업 버튼
+view.addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-cact]");
+  if (!btn) return;
+  const label = btn.dataset.label;
+  const confirmMsg = btn.dataset.confirm;
+  if (confirmMsg && !(await confirmBox(`${label}할까요?`, confirmMsg, label))) return;
+  btn.disabled = true;
+  try {
+    const r = await api(`/api/connections/${encodeURIComponent(btn.dataset.conn)}/actions/${encodeURIComponent(btn.dataset.cact)}`,
+      { method: "POST", body: { params: JSON.parse(btn.dataset.params || "{}"), confirm: !!confirmMsg } });
+    if (r.text !== undefined) { showText(r.title || label, r.text); return; }
+    toast(r.message || "완료했습니다");
+    setTimeout(route, 1000);
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+/* ---------- 인프라 ---------- */
 async function renderInfra() {
-  const d = await api("/api/infra");
-  const keys = [["synology", d.nas, nasPanel], ["proxmox", d.proxmox, pvePanel], ["portainer", d.portainer, ptnPanel]];
-  const on = keys.filter(([, sys]) => sys.configured);
-  view.innerHTML = on.length ? `
-    <header class="page-head"><div><h1>인프라</h1><p>${on.map(([k]) => esc(CONN_TYPES.find((c) => c.key === k).title)).join(" · ")}</p></div>
-      <button class="btn accent" data-refresh>새로 고침</button></header>
-    <div class="grid wide">${on.map(([, sys, fn]) => fn(sys)).join("")}</div>
-    ${addMore(["synology", "proxmox", "portainer"], on.map(([k]) => k))}`
+  const list = await statusGrid("infra");
+  const types = META.filter((m) => m.category === "infra");
+  view.innerHTML = list.length ? `
+    <header class="page-head"><div><h1>인프라</h1><p>연결 ${list.length}개 · ${list.filter((x) => x.online).length}개 응답</p></div>
+      <div class="chips"><button class="btn" data-pick="infra">+ 연결 추가</button><button class="btn accent" data-refresh>새로 고침</button></div></header>
+    <div class="grid wide">${list.map(statusCard).join("")}</div>`
     : `<header class="page-head"><div><h1>인프라</h1><p>아직 연결한 인프라가 없어요.</p></div></header>
-    ${emptyStart("인프라 연결하기", "쓰는 것만 골라 연결하면 이 화면에 나타납니다.", ["synology", "proxmox", "portainer"])}`;
+    ${emptyStart("인프라 연결하기", "쓰는 것만 골라 연결하면 이 화면에 나타납니다.", types)}`;
 }
 
-function notConfigured(name, how) {
-  return `<section class="card"><div class="card-head"><div class="card-title"><h2>${esc(name)}</h2></div>
-    <span class="badge"><span class="dot"></span>연결 전</span></div>
-    <div class="howto"><b class="howto-title">연결 방법</b>${how}</div></section>`;
-}
-
-function errorPanel(name, sys) {
-  return `<section class="card"><div class="card-head"><div class="card-title"><h2>${esc(name)}</h2></div>${statusBadge(sys)}</div>
-    <div class="empty">연결하지 못했습니다: ${esc(sys.error)}</div></section>`;
-}
-
-function nasPanel(sys) {
-  if (!sys.configured) return notConfigured("Synology NAS", "DSM 주소와 2단계 인증이 없는 전용 계정을 <a href=\"#/settings\">연결 설정</a>에서 입력하세요.");
-  if (!sys.online) return errorPanel("Synology NAS", sys);
-  const n = sys.data;
-  const vol = n.volumes[0] || {};
-  return `<section class="card">
-    <div class="card-head"><div class="card-title"><h2>Synology NAS</h2><small>${esc(n.model)} · ${esc(String(n.version || "").startsWith("DSM") ? n.version : "DSM " + (n.version || "—"))} · 가동 ${uptime(n.uptime)}</small></div>${statusBadge(sys)}</div>
-    <dl class="metrics">
-      <div class="metric"><dt>볼륨 사용률</dt><dd>${pct(vol.used_pct)}</dd>${bar(vol.used_pct)}</div>
-      <div class="metric"><dt>CPU</dt><dd>${pct(n.cpu_pct)}</dd>${bar(n.cpu_pct)}</div>
-      <div class="metric"><dt>메모리</dt><dd>${pct(n.mem_pct)}</dd>${bar(n.mem_pct)}</div>
-      <div class="metric"><dt>디스크 상태</dt><dd>${esc(dash(n.disk_health))}</dd></div>
-    </dl>
-    <div class="rows"><span class="rows-title">볼륨</span>
-      ${n.volumes.map((v) => `<div class="row"><div class="row-main"><b>${esc(v.name)}</b><small>${v.status === "normal" ? "정상" : esc(v.status)} · ${dash(v.total_tb, "TB")}</small></div><span class="pill ${v.used_pct >= 85 ? "warn" : ""}">${pct(v.used_pct)}</span></div>`).join("")}
-    </div>
-    <div class="rows"><span class="rows-title">디스크</span>
-      ${n.disks.map((x) => `<div class="row"><div class="row-main"><b>${esc(x.name)}</b><small>${esc(x.model)} · ${dash(x.temp, "°C")}</small></div><span class="pill ${x.status === "normal" ? "ok" : "warn"}">${x.status === "normal" ? "정상" : esc(x.status || "—")}</span></div>`).join("")}
-    </div>
-    <div class="actions"><button class="btn danger" data-act="nas-reboot">재부팅</button></div>
-  </section>`;
-}
-
-function pvePanel(sys) {
-  if (!sys.configured) return notConfigured("Proxmox VE", "Datacenter → Permissions → API Tokens 에서 토큰을 만들고 <a href=\"#/settings\">연결 설정</a>에서 입력하세요.");
-  if (!sys.online) return errorPanel("Proxmox VE", sys);
-  const p = sys.data;
-  const node = p.nodes[0] || {};
-  const guests = p.guests.map((g) => {
-    const running = g.status === "running";
-    const key = `${esc(g.node)}|${esc(g.type)}|${g.vmid}`;
-    return `<div class="row"><div class="row-main"><b>${esc(g.name)}</b><small>${g.type === "lxc" ? "LXC" : "VM"} ${g.vmid} · ${esc(g.node)} · ${running ? `CPU ${pct(g.cpu_pct)} · 메모리 ${pct(g.mem_pct)}` : "중지됨"}</small></div>
-      <div class="row-act">${running
-        ? `<button class="btn sm" data-act="pve-reboot" data-k="${key}">재시작</button><button class="btn sm danger" data-act="pve-shutdown" data-k="${key}">종료</button>`
-        : `<button class="btn sm" data-act="pve-start" data-k="${key}">시작</button>`}
-        <button class="btn sm" data-act="pve-snap" data-k="${key}">스냅샷</button><button class="btn sm" data-act="pve-backup" data-k="${key}">백업</button></div></div>`;
-  }).join("");
-  return `<section class="card">
-    <div class="card-head"><div class="card-title"><h2>Proxmox VE</h2><small>${esc(node.name || "")} · PVE ${esc(p.version)} · 가동 ${uptime(node.uptime)}</small></div>${statusBadge(sys)}</div>
-    <dl class="metrics">
-      <div class="metric"><dt>노드 CPU</dt><dd>${pct(node.cpu_pct)}</dd>${bar(node.cpu_pct)}</div>
-      <div class="metric"><dt>노드 메모리</dt><dd>${pct(node.mem_pct)}</dd>${bar(node.mem_pct)}</div>
-      <div class="metric"><dt>루트 디스크</dt><dd>${pct(node.disk_pct)}</dd>${bar(node.disk_pct)}</div>
-      <div class="metric"><dt>실행 중 VM/LXC</dt><dd>${p.running} / ${p.guests.length}</dd></div>
-    </dl>
-    <div class="rows"><span class="rows-title">VM · LXC</span>${guests || '<div class="empty">게스트가 없습니다</div>'}</div>
-  </section>`;
-}
-
-function ptnPanel(sys) {
-  if (!sys.configured) return notConfigured("Portainer", "My account → Access tokens 에서 토큰을 만들고 <a href=\"#/settings\">연결 설정</a>에서 입력하세요.");
-  if (!sys.online) return errorPanel("Portainer", sys);
-  const p = sys.data;
-  const rows = p.containers.map((c) => {
-    const running = c.state === "running";
-    const key = `${c.endpoint}|${esc(c.id)}|${esc(c.name)}`;
-    return `<div class="row"><div class="row-main"><b>${esc(c.name)}</b><small>${esc(c.image)} · ${esc(c.status)}${c.stack ? ` · 스택 ${esc(c.stack)}` : ""}</small></div>
-      <div class="row-act">${running
-        ? `<button class="btn sm" data-act="ct-restart" data-k="${key}">재시작</button><button class="btn sm danger" data-act="ct-stop" data-k="${key}">중지</button>`
-        : `<button class="btn sm" data-act="ct-start" data-k="${key}">시작</button>`}
-        <button class="btn sm" data-act="ct-logs" data-k="${key}">로그</button></div></div>`;
-  }).join("");
-  const stacks = p.stacks.map((s) => `<div class="row"><div class="row-main"><b>${esc(s.name)}</b><small>엔드포인트 ${s.endpoint}</small></div>
-    <div class="row-act"><span class="pill ${s.active ? "ok" : ""}">${s.active ? "실행 중" : "중지"}</span>
-    <button class="btn sm ${s.active ? "danger" : ""}" data-act="${s.active ? "stack-stop" : "stack-start"}" data-k="${s.id}|${s.endpoint}|${esc(s.name)}">${s.active ? "중지" : "시작"}</button></div></div>`).join("");
-  return `<section class="card">
-    <div class="card-head"><div class="card-title"><h2>Portainer</h2><small>Portainer ${esc(p.version)}</small></div>${statusBadge(sys)}</div>
-    <dl class="metrics">
-      <div class="metric"><dt>실행 중</dt><dd>${p.running}</dd></div>
-      <div class="metric"><dt>중지됨</dt><dd>${p.stopped}</dd></div>
-      <div class="metric"><dt>스택</dt><dd>${p.stacks.length}</dd></div>
-      <div class="metric"><dt>전체 컨테이너</dt><dd>${p.containers.length}</dd></div>
-    </dl>
-    <div class="rows"><span class="rows-title">컨테이너 (중지된 것 먼저)</span>${rows || '<div class="empty">컨테이너가 없습니다</div>'}</div>
-    ${stacks ? `<div class="rows"><span class="rows-title">스택</span>${stacks}</div>` : ""}
-  </section>`;
-}
+view.addEventListener("click", (e) => {
+  const b = e.target.closest("[data-pick]");
+  if (b) openTypePicker(b.dataset.pick);
+});
 
 /* ---------- 스마트홈 허브 ---------- */
 const ROLE_OPTIONS = ["HomeKit 홈 허브", "Thread 보더 라우터", "Matter 컨트롤러", "Matter 브리지", "Zigbee 코디네이터", "음성 비서", "브리지", "디스플레이", "가전 허브"];
@@ -304,71 +269,34 @@ const PLATFORM_OPTIONS = ["HomeKit", "Google Home", "SmartThings", "Aqara", "Hom
 let pingCache = {};
 
 async function renderHubs() {
-  const [hubs, devices, platforms, backups] = await Promise.all([
-    api("/api/hubs"), api("/api/registry/devices"), api("/api/registry/platforms"), api("/api/hubs/hubitat/backups"),
+  const [list, devices, platforms, backups] = await Promise.all([
+    statusGrid("smarthome"), api("/api/registry/devices"), api("/api/registry/platforms"), api("/api/hub-backups"),
   ]);
-  const cards = [
-    ...hubs.hubitat.map(hubitatCard),
-    hubs.home_assistant.configured ? haCard(hubs.home_assistant) : "",
-    hubs.homebridge.configured ? hbCard(hubs.homebridge) : "",
-  ].join("");
-  const configured = [...(hubs.hubitat.length ? ["hubitat"] : []), ...(hubs.home_assistant.configured ? ["home_assistant"] : []),
-    ...(hubs.homebridge.configured ? ["homebridge"] : [])];
-  const online = hubs.hubitat.filter((h) => h.online).length + (hubs.home_assistant.online ? 1 : 0) + (hubs.homebridge.online ? 1 : 0);
-  const total = hubs.hubitat.length + (hubs.home_assistant.configured ? 1 : 0) + (hubs.homebridge.configured ? 1 : 0);
+  const types = META.filter((m) => m.category === "smarthome");
+  const online = list.filter((x) => x.online).length;
   view.innerHTML = `
     <header class="page-head"><div><h1>스마트홈 허브</h1><p>API로 관리하는 허브와, 연동은 안 되지만 역할을 기록해 두는 기기</p></div>
-      ${total ? '<button class="btn accent" data-refresh>새로 고침</button>' : ""}</header>
-    ${total ? `<section class="section"><div class="section-head"><h2>허브 상태</h2><span class="muted" style="font-size:13px">${total}개 중 ${online}개 응답</span></div>
-      <div class="grid">${cards}</div>
-      ${addMore(["hubitat", "home_assistant", "homebridge"], configured)}`
-      : `<section class="section">${emptyStart("허브 연결하기", "Hubitat, Home Assistant, Homebridge 중 쓰는 것만 연결하세요.", ["hubitat", "home_assistant", "homebridge"])}`}
+      ${list.length ? '<div class="chips"><button class="btn" data-pick="smarthome">+ 연결 추가</button><button class="btn accent" data-refresh>새로 고침</button></div>' : ""}</header>
+    ${list.length ? `<section class="section"><div class="section-head"><h2>허브 상태</h2><span class="muted" style="font-size:13px">${list.length}개 중 ${online}개 응답</span></div>
+      <div class="grid wide">${list.map(statusCard).join("")}</div>
       ${backups.length ? `<details class="card"><summary style="cursor:pointer;font-size:14px">Hubitat 백업 파일 ${backups.length}개</summary>
         <div class="rows">${backups.map((b) => `<div class="row"><div class="row-main"><b class="mono">${esc(b.file)}</b><small>${(b.size / 1048576).toFixed(1)} MB · ${new Date(b.mtime * 1000).toLocaleString("ko-KR")}</small></div>
-        <a class="btn sm" style="display:inline-flex;align-items:center;text-decoration:none" href="/api/hubs/hubitat/backups/${encodeURIComponent(b.file)}" download>받기</a></div>`).join("")}</div></details>` : ""}
-    </section>
+        <a class="btn sm" style="display:inline-flex;align-items:center;text-decoration:none" href="/api/hub-backups/${encodeURIComponent(b.file)}" download>받기</a></div>`).join("")}</div></details>` : ""}
+    </section>`
+    : `<section class="section">${emptyStart("허브 연결하기", "쓰는 허브만 골라 연결하세요.", types)}</section>`}
     <section class="section"><div class="section-head"><div><h2>수동 등록 기기</h2><p>API 연동은 없지만 IP를 넣으면 응답 여부(ping)를 확인합니다</p></div>
       <div class="chips">${devices.some((d) => d.ip) ? '<button class="btn" data-act="ping-all">전체 응답 확인</button>' : ""}<button class="btn accent" data-act="dev-add">+ 기기 등록</button></div></div>
       <div class="grid mid">${devices.map(manualCard).join("") || '<div class="empty">Apple TV, HomePod, Nest Hub, Aqara 허브처럼 API로 연결하지 않는 기기를 역할과 함께 적어 둘 수 있어요. "+ 기기 등록"을 누르세요.</div>'}</div>
     </section>
     <section class="section"><div class="section-head"><div><h2>플랫폼 역할</h2><p>플랫폼마다 무엇을 맡기는지</p></div>
-      <button class="btn" data-act="pf-add">플랫폼 추가</button></div>
-      ${platforms.length ? "" : '<div class="empty">플랫폼마다 무엇을 맡기는지 정리해 두는 표입니다. "플랫폼 추가"로 시작하세요.</div>'}
-      <div class="table-wrap" ${platforms.length ? "" : "hidden"}><table class="stack-table full" style="min-width:860px"><thead><tr><th scope="col">플랫폼</th><th scope="col">용도</th><th scope="col">주요 기능 · 담당 기기</th><th scope="col">허브 · 연결 경로</th><th scope="col"><span class="muted">편집</span></th></tr></thead>
+      <button class="btn" data-act="pf-add">+ 플랫폼 추가</button></div>
+      ${platforms.length ? `<div class="table-wrap"><table class="stack-table full" style="min-width:860px"><thead><tr><th scope="col">플랫폼</th><th scope="col">용도</th><th scope="col">주요 기능 · 담당 기기</th><th scope="col">허브 · 연결 경로</th><th scope="col"><span class="muted">편집</span></th></tr></thead>
       <tbody>${platforms.map((p) => `<tr><th scope="row">${esc(p.name)}</th><td><span class="tag">${esc(p.use)}</span></td><td>${esc(p.features)}</td><td>${esc(p.path)}</td>
-        <td class="cell-actions" style="white-space:nowrap"><button class="btn sm" data-act="pf-edit" data-k="${p.id}">편집</button> <button class="btn sm danger" data-act="pf-del" data-k="${p.id}" aria-label="${esc(p.name)} 삭제">삭제</button></td></tr>`).join("")}</tbody></table></div>
+        <td class="cell-actions" style="white-space:nowrap"><button class="btn sm" data-act="pf-edit" data-k="${p.id}">편집</button> <button class="btn sm danger" data-act="pf-del" data-k="${p.id}" aria-label="${esc(p.name)} 삭제">삭제</button></td></tr>`).join("")}</tbody></table></div>`
+      : '<div class="empty">플랫폼마다 무엇을 맡기는지 정리해 두는 표입니다. "+ 플랫폼 추가"로 시작하세요.</div>'}
     </section>`;
   view._devices = devices;
   view._platforms = platforms;
-}
-
-function hubitatCard(h) {
-  const d = h.data || {};
-  const fw = d.firmware || "—";
-  const mem = d.free_memory_kb != null ? `${Math.round(d.free_memory_kb / 1024)} MB` : "—";
-  return `<article class="card"><div class="card-head"><div class="card-title"><b>${esc(d.name)}</b><small>${esc(d.role ? d.role + " · " : "")}${esc(String(d.url || "").replace(/^https?:\/\//, ""))}</small></div>${statusBadge(h)}</div>
-    <dl class="kv"><div><dt>펌웨어</dt><dd>${esc(fw)}</dd></div><div><dt>기기</dt><dd>${dash(d.device_count)}</dd></div>
-    <div><dt>여유 메모리</dt><dd>${mem}</dd></div><div><dt>내부 온도</dt><dd>${dash(d.temperature_c, "°C")}</dd></div></dl>
-    <div class="actions"><button class="btn" data-act="hub-backup" data-k="${esc(d.id)}|${esc(d.name)}">백업</button>
-    <button class="btn danger" data-act="hub-reboot" data-k="${esc(d.id)}|${esc(d.name)}">재부팅</button></div></article>`;
-}
-
-function haCard(sys) {
-  const d = sys.data || {};
-  return `<article class="card"><div class="card-head"><div class="card-title"><b>Home Assistant</b><small>HA OS${d.location ? " · " + esc(d.location) : ""}</small></div>${statusBadge(sys)}</div>
-    ${sys.configured ? `<dl class="kv"><div><dt>Core</dt><dd>${dash(d.version)}</dd></div><div><dt>엔티티</dt><dd>${dash(d.entity_count)}</dd></div>
-    <div><dt>업데이트</dt><dd>${dash(d.update_count)}</dd></div><div><dt>상태</dt><dd>${sys.online ? "정상" : esc(sys.error)}</dd></div></dl>
-    <div class="actions"><button class="btn" data-act="ha-backup">백업</button><button class="btn danger" data-act="ha-restart">재시작</button></div>`
-    : '<div class="howto"><b class="howto-title">연결 방법</b>프로필 → 보안 → 장기 액세스 토큰을 만들어 <a href="#/settings">연결 설정</a>에서 입력하세요.</div>'}</article>`;
-}
-
-function hbCard(sys) {
-  const d = sys.data || {};
-  return `<article class="card"><div class="card-head"><div class="card-title"><b>Homebridge</b><small>config-ui-x</small></div>${statusBadge(sys, d.running === false ? "정지됨" : "온라인")}</div>
-    ${sys.configured ? `<dl class="kv"><div><dt>버전</dt><dd>${dash(d.version)}</dd></div><div><dt>플러그인</dt><dd>${dash(d.plugin_count)}</dd></div>
-    <div><dt>액세서리</dt><dd>${d.insecure_mode ? dash(d.accessory_count) : "insecure 모드 필요"}</dd></div><div><dt>상태</dt><dd>${sys.online ? (d.running ? "실행 중" : "정지") : esc(sys.error)}</dd></div></dl>
-    <div class="actions"><button class="btn danger" data-act="hb-restart">재시작</button></div>`
-    : '<div class="howto"><b class="howto-title">연결 방법</b>Homebridge UI 계정을 <a href="#/settings">연결 설정</a>에서 입력하세요. 액세서리 목록은 insecure 모드(-I)에서만 보입니다.</div>'}</article>`;
 }
 
 function manualCard(d) {
@@ -398,12 +326,16 @@ const PLATFORM_FIELDS = [
   { name: "features", label: "주요 기능 · 담당 기기", type: "textarea", full: true },
   { name: "path", label: "허브 · 연결 경로", type: "textarea", full: true },
 ];
-const PATH_FIELDS = [
-  { name: "src", label: "출발", required: true, placeholder: "예: SmartThings" },
-  { name: "dst", label: "도착", required: true, placeholder: "예: Hubitat Main" },
-  { name: "via", label: "연동 방식", full: true, placeholder: "예: HubiThings Replica" },
-  { name: "check_ref", label: "상태 확인 대상", full: true, placeholder: "hubitat:main · homeassistant · homebridge (비우면 확인 안 함)" },
-];
+async function pathFields() {
+  const conns = await api("/api/connections");
+  return [
+    { name: "src", label: "출발", required: true, placeholder: "예: SmartThings" },
+    { name: "dst", label: "도착", required: true, placeholder: "예: Hubitat Main" },
+    { name: "via", label: "연동 방식", full: true, placeholder: "예: HubiThings Replica" },
+    { name: "check_ref", label: "상태 확인 (이 연결이 응답하면 정상으로 표시)", full: true, type: "select",
+      options: [["", "확인 안 함"], ...conns.map((c) => [c.id, `${c.name} (${c.title})`])] },
+  ];
+}
 
 async function saveRow(kind, id, fields, current) {
   const title = { devices: "기기", platforms: "플랫폼", paths: "연동 경로" }[kind];
@@ -426,14 +358,14 @@ async function deleteRow(kind, id, name) {
 let roomFilter = "전체";
 
 async function renderIntegration() {
-  const d = await api("/api/smarthome");
+  const [d] = await Promise.all([api("/api/smarthome"), loadMeta()]);
   view._sm = d;
   drawIntegration();
 }
 
 function drawIntegration() {
   const d = view._sm;
-  const hasSource = d.sources.hubitat > 0 || d.sources.home_assistant;
+  const hasSource = d.sources.length > 0;
   const rooms = ["전체", ...new Set(d.devices.map((x) => x.room))];
   if (!rooms.includes(roomFilter)) roomFilter = "전체";
   const shown = d.devices.filter((x) => roomFilter === "전체" || x.room === roomFilter);
@@ -446,7 +378,7 @@ function drawIntegration() {
   ].join("");
 
   const devicesHtml = !hasSource
-    ? emptyStart("기기 제어", "Hubitat(Maker API)이나 Home Assistant를 연결하면 방별 기기 목록과 켜기/끄기가 여기에 나타납니다.", ["hubitat", "home_assistant"])
+    ? emptyStart("기기 제어", "기기를 가져올 수 있는 허브(Hubitat Maker API, Home Assistant 등)를 연결하면 방별 기기 목록과 켜기/끄기가 여기에 나타납니다.", META.filter((m) => m.devices))
     : `<div class="split">
       <section class="section grow"><div class="section-head"><h2>기기 제어</h2>
         ${d.devices.length ? `<div class="filters" role="group" aria-label="방 필터">${rooms.map((r) => `<button type="button" data-room="${esc(r)}" aria-pressed="${r === roomFilter}">${esc(r)}</button>`).join("")}</div>` : ""}</div>
@@ -494,66 +426,19 @@ async function renderLog() {
 /* ---------- 연결 설정 ---------- */
 const MASK = "__SET__";
 
-const SECTION_DEFS = [
-  {
-    key: "home_assistant", group: "hub", title: "Home Assistant", sub: "REST API · 장기 액세스 토큰",
-    help: "HA 프로필 → 보안 → <b>장기 액세스 토큰</b>을 만들어 붙여 넣으세요. 백업은 HA OS(Supervisor) 백업을 씁니다.",
-    fields: [
-      { name: "url", label: "주소", ph: "http://192.168.0.x:8123", full: true },
-      { name: "token", label: "장기 액세스 토큰", secret: true, full: true },
-      { name: "verify_ssl", label: "HTTPS 인증서 검증", type: "bool", def: true },
-    ],
-  },
-  {
-    key: "homebridge", group: "hub", title: "Homebridge", sub: "config-ui-x 로그인",
-    help: "Homebridge UI에 로그인하는 계정입니다. HomeKit 노출 배지와 액세서리 수는 Homebridge를 <b>insecure 모드(-I)</b>로 실행해야 보입니다.",
-    fields: [
-      { name: "url", label: "주소", ph: "http://192.168.0.x:8581", full: true },
-      { name: "username", label: "아이디", ph: "admin" },
-      { name: "password", label: "비밀번호", secret: true },
-      { name: "verify_ssl", label: "HTTPS 인증서 검증", type: "bool", def: true },
-    ],
-  },
-  {
-    key: "synology", group: "infra", title: "Synology NAS", sub: "DSM Web API",
-    help: "2단계 인증을 끈 <b>HomeOps 전용 계정</b>을 만들어 쓰세요. 재부팅·스토리지 조회에는 관리자 그룹 권한이 필요합니다.",
-    fields: [
-      { name: "url", label: "주소", ph: "https://192.168.0.x:5001", full: true },
-      { name: "username", label: "아이디", ph: "homeops" },
-      { name: "password", label: "비밀번호", secret: true },
-      { name: "verify_ssl", label: "HTTPS 인증서 검증 (자체 서명 인증서면 끄기)", type: "bool", def: false },
-    ],
-  },
-  {
-    key: "proxmox", group: "infra", title: "Proxmox VE", sub: "API 토큰",
-    help: "Datacenter → Permissions → <b>API Tokens</b>에서 만든 토큰입니다. 토큰 ID는 <code>사용자@realm!토큰이름</code> 형식이에요. 권장 권한: VM.Audit, VM.PowerMgmt, VM.Snapshot, VM.Backup, Datastore.Audit, Datastore.AllocateSpace, Sys.Audit",
-    fields: [
-      { name: "url", label: "주소", ph: "https://192.168.0.x:8006", full: true },
-      { name: "token_id", label: "토큰 ID", ph: "homeops@pve!dashboard" },
-      { name: "token_secret", label: "토큰 Secret", secret: true },
-      { name: "backup_storage", label: "백업 저장소", ph: "local", def: "local" },
-      { name: "verify_ssl", label: "HTTPS 인증서 검증 (자체 서명 인증서면 끄기)", type: "bool", def: false },
-    ],
-  },
-  {
-    key: "portainer", group: "infra", title: "Portainer", sub: "Access Token",
-    help: "Portainer → My account → <b>Access tokens</b>에서 만든 토큰입니다.",
-    fields: [
-      { name: "url", label: "주소", ph: "https://192.168.0.x:9443", full: true },
-      { name: "api_key", label: "Access Token", secret: true, full: true },
-      { name: "verify_ssl", label: "HTTPS 인증서 검증 (자체 서명 인증서면 끄기)", type: "bool", def: false },
-    ],
-  },
-];
-
 function inputHtml(f, value, idPrefix) {
   const id = `${idPrefix}-${f.name}`;
   if (f.type === "bool") {
     const on = value === undefined || value === null ? f.def : value;
     return `<label class="field full" style="flex-direction:row;align-items:center;gap:10px;color:var(--text)"><input type="checkbox" name="${f.name}" ${on ? "checked" : ""} style="width:20px;height:20px;accent-color:var(--accent)">${esc(f.label)}</label>`;
   }
+  if (f.type === "select") {
+    const cur = value ?? f.def;
+    return `<label class="field${f.full ? " full" : ""}" for="${id}">${esc(f.label)}<select id="${id}" name="${f.name}">
+      ${(f.options || []).map(([v, t]) => `<option value="${esc(v)}" ${v === cur ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>`;
+  }
   const isSet = f.secret && value === MASK;
-  const v = f.secret ? "" : (value ?? f.def ?? "");
+  const v = f.secret ? (value && value !== MASK ? value : "") : (value ?? f.def ?? "");
   const ph = isSet ? "저장됨 · 바꿀 때만 입력" : (f.ph || "");
   return `<label class="field${f.full ? " full" : ""}" for="${id}"><span class="field-label">${esc(f.label)}${isSet ? ' <span class="badge ok">저장됨</span>' : ""}</span>
     <input id="${id}" name="${f.name}" ${f.secret ? 'type="password" autocomplete="new-password"' : 'autocomplete="off"'} ${f.type === "number" ? 'inputmode="numeric"' : ""} ${f.type === "time" ? 'type="time"' : ""} value="${esc(v)}" placeholder="${esc(ph)}"></label>`;
@@ -563,133 +448,104 @@ function readForm(form, fields) {
   const out = {};
   for (const f of fields) {
     const el = form.elements[f.name];
+    if (!el) continue;
     if (f.type === "bool") out[f.name] = el.checked;
     else out[f.name] = el.value.trim();
   }
   return out;
 }
 
-const HUB_FIELDS = [
-  { name: "name", label: "이름", ph: "Hubitat Main" },
-  { name: "id", label: "ID (영문 소문자)", ph: "main" },
-  { name: "role", label: "역할", ph: "예: Zigbee 전용" },
-  { name: "url", label: "허브 주소", ph: "http://192.168.0.80" },
-  { name: "app_id", label: "Maker API App ID", ph: "예: 12", type: "number" },
-  { name: "token", label: "Maker API Access Token", secret: true },
-  { name: "login_user", label: "허브 로그인 아이디 (로그인 보안을 켠 경우만)", ph: "비워 두면 사용 안 함" },
-  { name: "login_password", label: "허브 로그인 비밀번호", secret: true },
-];
-const HUB_HELP = '허브 웹 → Apps → Add Built-In App → <b>Maker API</b>를 설치하고, "Allow Access via Local IP Address"를 켠 뒤 관리할 기기를 고르세요. 예시 URL의 <code>/apps/api/<b>App ID</b>/…?access_token=<b>토큰</b></code>을 넣으면 됩니다.';
-
-// 추가할 수 있는 연결 종류 (고르기 화면)
-const CONN_TYPES = [
-  { key: "hubitat", group: "스마트홈", title: "Hubitat 허브", desc: "기기 제어 · 모드 · 허브 백업 · 재부팅", multi: true },
-  { key: "home_assistant", group: "스마트홈", title: "Home Assistant", desc: "엔티티 제어 · 백업 · 재시작" },
-  { key: "homebridge", group: "스마트홈", title: "Homebridge", desc: "HomeKit 노출 확인 · 재시작" },
-  { key: "synology", group: "인프라", title: "Synology NAS", desc: "볼륨 · 디스크 · 리소스 · 재부팅" },
-  { key: "proxmox", group: "인프라", title: "Proxmox VE", desc: "VM · LXC 전원 · 스냅샷 · 백업" },
-  { key: "portainer", group: "인프라", title: "Portainer", desc: "컨테이너 · 스택 · 로그" },
-];
-
-function hubValues(h) {
-  return {
-    name: h.name, id: h.id, role: h.role, url: h.url,
-    app_id: h.maker_api ? h.maker_api.app_id : "", token: h.maker_api ? h.maker_api.token : "",
-    login_user: h.login ? h.login.username : "", login_password: h.login ? h.login.password : "",
-  };
+function setResult(form, ok, msg) {
+  const p = form.querySelector(".test-result");
+  if (!p) return;
+  p.textContent = msg;
+  p.className = "test-result " + (ok ? "ok" : "bad");
 }
 
-function readHub(form, i) {
-  const r = readForm(form, HUB_FIELDS);
-  const appId = r.app_id ? Number(r.app_id) : null;
-  return {
-    orig_id: view._hubs[i].orig_id || null,
-    id: r.id, name: r.name, role: r.role, url: r.url,
-    maker_api: appId || r.token ? { app_id: appId || 0, token: r.token } : null,
-    login: r.login_user ? { username: r.login_user, password: r.login_password } : null,
-  };
+/** 연동 선언의 입력 칸 → 폼 칸 */
+function formFields(meta) {
+  return [{ name: "__name", label: "이름", ph: meta.title },
+    ...meta.fields.map((f) => ({ name: f.name, label: f.label, type: f.kind === "url" || f.kind === "text" ? "text" : f.kind,
+      secret: f.secret, ph: f.ph, def: f.default, full: f.full, options: f.options }))];
 }
 
-function shortUrl(u) { return String(u || "").replace(/^https?:\/\//, "").replace(/\/$/, ""); }
+function readConn(form, meta) {
+  const v = readForm(form, formFields(meta));
+  const name = v.__name;
+  delete v.__name;
+  return { name, config: v };
+}
 
-/** 연결 하나의 카드: 접힌 상태(요약) 또는 편집 상태(입력 폼) */
-function connCard({ cardKey, typeLabel, title, sub, isNew, editing, help, fields, values }) {
-  if (!editing) {
-    return `<article class="card conn" data-card="${esc(cardKey)}">
-      <div class="card-head"><div class="card-title"><span class="type-label">${esc(typeLabel)}</span><b>${esc(title)}</b><small>${esc(sub || "")}</small></div>
-        <span class="badge ok"><span class="dot ok"></span>저장됨</span></div>
-      <p class="test-result" role="status" aria-live="polite"></p>
-      <div class="actions"><button type="button" class="btn" data-sact="test">연결 테스트</button>
-        <button type="button" class="btn" data-sact="edit">편집</button>
-        <button type="button" class="btn danger" data-sact="remove">삭제</button></div></article>`;
+async function renderSettings() {
+  const [conns, s, me] = await Promise.all([api("/api/connections"), api("/api/settings"), api("/api/auth/me"), loadMeta()]);
+  view._conns = conns;
+  view._settings = s;
+  view._me = me;
+  view._editing = new Set();
+  view._new = [];        // 아직 저장하지 않은 새 연결 [{key, type}]
+  view._drafts = {};     // 다시 그릴 때 입력 중인 값 유지
+  drawSettings();
+  const add = new URLSearchParams(location.hash.split("?")[1] || "").get("add");
+  history.replaceState(null, "", "#/settings");
+  if (add && metaOf(add)) startAdd(add);
+}
+
+function keepDrafts() {
+  view.querySelectorAll("form[data-card]").forEach((f) => {
+    const meta = metaOf(f.dataset.type);
+    if (meta) view._drafts[f.dataset.card] = readConn(f, meta);
+  });
+}
+
+function connForm(key, meta, conn) {
+  const draft = view._drafts[key];
+  const values = { __name: draft ? draft.name : (conn ? conn.name : ""), ...(conn ? conn.config : {}), ...(draft ? draft.config : {}) };
+  if (conn && draft) {  // 비워 둔 비밀값은 "저장됨" 유지
+    for (const f of meta.fields) if (f.secret && !draft.config[f.name] && conn.config[f.name] === MASK) values[f.name] = MASK;
   }
-  return `<form class="card conn editing" data-card="${esc(cardKey)}" novalidate>
-    <div class="card-head"><div class="card-title"><span class="type-label">${esc(typeLabel)}</span><h2>${esc(isNew ? `${cardKey.startsWith("hub:") ? "Hubitat 허브" : title} 추가` : title)}</h2></div>
-      ${isNew ? '<span class="badge warn">새 연결</span>' : ""}</div>
-    <div class="howto">${help}</div>
-    <div class="form-grid">${fields.map((f) => inputHtml(f, values[f.name], cardKey.replace(/\W/g, ""))).join("")}</div>
+  return `<form class="card conn editing" data-card="${esc(key)}" data-type="${esc(meta.type)}" ${conn ? `data-id="${esc(conn.id)}"` : ""} novalidate>
+    <div class="card-head"><div class="card-title"><span class="type-label">${esc(CATEGORY_LABEL[meta.category] || "")}</span>
+      <h2>${esc(conn ? conn.name : `${meta.title} 추가`)}</h2></div>${conn ? "" : '<span class="badge warn">새 연결</span>'}</div>
+    ${meta.help ? `<div class="howto">${meta.help}</div>` : ""}
+    <div class="form-grid">${formFields(meta).map((f) => inputHtml(f, values[f.name], key.replace(/\W/g, ""))).join("")}</div>
     <p class="test-result" role="status" aria-live="polite"></p>
     <div class="actions"><button type="button" class="btn" data-sact="test">연결 테스트</button>
       <button type="button" class="btn primary" data-sact="save">저장</button>
       <button type="button" class="btn" data-sact="cancel">취소</button></div></form>`;
 }
 
-function typePicker(compact) {
-  const s = view._settings;
-  const groups = ["스마트홈", "인프라"];
-  return groups.map((g) => `<div class="picker-group"><span class="rows-title">${g}</span><div class="picker">
-    ${CONN_TYPES.filter((t) => t.group === g).map((t) => {
-      const added = !t.multi && (s[t.key] || view._adding.has(t.key));
-      return `<button type="button" class="pick" data-add="${t.key}" ${added ? "disabled" : ""}>
-        <b>${esc(t.title)}</b><small>${added ? "추가됨" : esc(t.desc)}</small></button>`;
-    }).join("")}</div></div>`).join("") + (compact ? "" : "");
+function connSummary(conn) {
+  const meta = metaOf(conn.type);
+  return `<article class="card conn" data-card="c:${esc(conn.id)}" data-type="${esc(conn.type)}" data-id="${esc(conn.id)}">
+    <div class="card-head"><div class="card-title"><span class="type-label">${esc(meta ? meta.title : conn.type)}</span><b>${esc(conn.name)}</b>
+      <small>${esc(shortUrl(conn.config.url))}</small></div>
+      ${conn.available ? '<span class="badge ok"><span class="dot ok"></span>저장됨</span>' : '<span class="badge bad">지원 안 됨</span>'}</div>
+    <p class="test-result" role="status" aria-live="polite"></p>
+    <div class="actions">${conn.available ? '<button type="button" class="btn" data-sact="test">연결 테스트</button><button type="button" class="btn" data-sact="edit">편집</button>' : ""}
+      <button type="button" class="btn danger" data-sact="remove">삭제</button></div></article>`;
 }
 
-async function renderSettings() {
-  const [s, me] = await Promise.all([api("/api/settings"), api("/api/auth/me")]);
-  view._settings = s;
-  view._me = me;
-  view._hubs = s.hubitat.map((h) => ({ ...h, orig_id: h.id }));
-  view._editing = new Set();
-  view._adding = new Set();
-  drawSettings();
-  // 다른 화면의 "+ 추가" 버튼으로 들어온 경우 (#/settings?add=종류)
-  const add = new URLSearchParams(location.hash.split("?")[1] || "").get("add");
-  history.replaceState(null, "", "#/settings");
-  if (add && CONN_TYPES.some((t) => t.key === add) && (add === "hubitat" || !s[add])) startAdd(add);
+function pickerByCategory() {
+  return ["smarthome", "infra"].map((cat) => {
+    const types = META.filter((m) => m.category === cat && m.type !== "web");
+    return types.length ? `<div class="picker-group"><span class="rows-title">${CATEGORY_LABEL[cat]}</span>${typeButtons(types, false)}</div>` : "";
+  }).join("") + `<div class="picker-group"><span class="rows-title">기타</span>${typeButtons(META.filter((m) => m.type === "web"), false)}</div>`;
 }
 
 function drawSettings() {
   const s = view._settings;
   const me = view._me;
-  const cards = [];
-  view._hubs.forEach((h, i) => {
-    const key = `hub:${i}`;
-    const isNew = !h.orig_id;
-    cards.push(connCard({
-      cardKey: key, typeLabel: "Hubitat 허브", title: h.name || h.id, sub: `${shortUrl(h.url)}${h.role ? " · " + h.role : ""}`,
-      isNew, editing: isNew || view._editing.has(key), help: HUB_HELP, fields: HUB_FIELDS, values: hubValues(h),
-    }));
-  });
-  for (const def of SECTION_DEFS) {
-    const v = s[def.key];
-    const adding = view._adding.has(def.key);
-    if (!v && !adding) continue;
-    cards.push(connCard({
-      cardKey: def.key, typeLabel: def.group === "infra" ? "인프라" : "스마트홈", title: def.title, sub: v ? shortUrl(v.url) : "",
-      isNew: !v, editing: !v || view._editing.has(def.key), help: def.help, fields: def.fields, values: v || {},
-    }));
-  }
+  const cards = [
+    ...view._new.map((n) => connForm(n.key, metaOf(n.type), null)),
+    ...view._conns.map((c) => (view._editing.has(c.id) && metaOf(c.type) ? connForm(`c:${c.id}`, metaOf(c.type), c) : connSummary(c))),
+  ];
   const empty = cards.length === 0;
-  const savedCount = view._hubs.filter((h) => h.orig_id).length + SECTION_DEFS.filter((d) => s[d.key]).length;
-
   view.innerHTML = `
-    <header class="page-head"><div><h1>연결 설정</h1><p>${empty ? "쓰는 시스템만 골라서 연결하세요." : `연결 ${savedCount}개 · 토큰과 비밀번호는 암호화되어 저장됩니다.`}</p></div>
-      <div class="chips">${empty ? "" : '<button type="button" class="btn primary" data-sact="add">+ 연결 추가</button>'}</div></header>
-
+    <header class="page-head"><div><h1>연결 설정</h1><p>${empty ? "쓰는 시스템만 골라서 연결하세요." : `연결 ${view._conns.length}개 · 토큰과 비밀번호는 암호화되어 저장됩니다.`}</p></div>
+      ${empty ? "" : '<div class="chips"><button type="button" class="btn primary" data-sact="add">+ 연결 추가</button></div>'}</header>
     ${empty ? `<section class="card onboarding"><div class="card-title"><h2>무엇부터 연결할까요?</h2>
-        <small>하나만 연결해도 바로 쓸 수 있고, 나머지는 나중에 "+ 연결 추가"로 언제든 붙일 수 있어요.</small></div>
-        ${typePicker()}</section>`
+        <small>하나만 연결해도 바로 쓸 수 있고, 나머지는 나중에 "+ 연결 추가"로 언제든 붙일 수 있어요. 같은 종류도 여러 개 추가할 수 있습니다.</small></div>
+        ${pickerByCategory()}</section>`
       : `<div class="grid wide">${cards.join("")}</div>`}
 
     <details class="card fold"><summary><b>알림 · 계정</b><small>배터리 경고 기준 ${s.alerts.battery_warn}% · 로그인 ${esc(me.user)}</small></summary>
@@ -718,59 +574,12 @@ function drawSettings() {
       <a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="#/log">작업 기록</a></div>`;
 }
 
-function setResult(form, ok, msg) {
-  const p = form.querySelector(".test-result");
-  p.textContent = msg;
-  p.className = "test-result " + (ok ? "ok" : "bad");
-}
-
-/** 편집 중인 허브 폼의 입력값을 view._hubs 에 옮겨 둔다 (다시 그려도 입력이 남도록) */
-function keepHubInputs() {
-  view.querySelectorAll('form[data-card^="hub:"]').forEach((f) => {
-    const i = Number(f.dataset.card.split(":")[1]);
-    const prev = view._hubs[i];
-    const cur = { ...readHub(f, i), orig_id: prev.orig_id };
-    if (cur.maker_api && !cur.maker_api.token && prev.maker_api && prev.maker_api.token === MASK) cur.maker_api.token = MASK;
-    if (cur.login && !cur.login.password && prev.login && prev.login.password === MASK) cur.login.password = MASK;
-    view._hubs[i] = cur;
-  });
-}
-
-/** 저장된 허브 목록 + 바꾼 허브 하나로 저장 */
-async function saveHubList(hubs, btn, message) {
-  btn.disabled = true;
-  try {
-    const s = await api("/api/settings/hubitat", { method: "PUT", body: hubs });
-    view._settings = s;
-    const pending = view._hubs.filter((h) => !h.orig_id && !hubs.includes(h));
-    view._hubs = [...s.hubitat.map((h) => ({ ...h, orig_id: h.id })), ...pending];
-    view._editing = new Set([...view._editing].filter((k) => !k.startsWith("hub:")));
-    drawSettings();
-    toast(message);
-    return true;
-  } catch (err) {
-    const form = btn.closest("form, article");
-    if (form) setResult(form, false, err.message);
-    toast(err.message, true);
-    return false;
-  } finally {
-    btn.disabled = false;
-  }
-}
-
+let newSeq = 0;
 function startAdd(type) {
-  keepHubInputs();
-  if (type === "hubitat") {
-    const n = view._hubs.length + 1;
-    const ids = new Set(view._hubs.map((h) => h.id));
-    let id = n === 1 ? "main" : `hub${n}`;
-    while (ids.has(id)) id += "x";
-    view._hubs.push({ id, name: "", role: "", url: "http://", maker_api: null, login: null, orig_id: null });
-  } else {
-    view._adding.add(type);
-  }
+  keepDrafts();
+  const key = `n:${++newSeq}`;
+  view._new.unshift({ key, type });
   drawSettings();
-  const key = type === "hubitat" ? `hub:${view._hubs.length - 1}` : type;
   const card = view.querySelector(`[data-card="${key}"]`);
   if (card) {
     card.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -779,13 +588,16 @@ function startAdd(type) {
   }
 }
 
+async function refreshConns(message) {
+  view._conns = await api("/api/connections");
+  drawSettings();
+  if (message) toast(message);
+}
+
 view.addEventListener("click", async (e) => {
+  if (view.dataset.route !== "settings") return;
   const pick = e.target.closest("[data-add]");
-  if (pick && view.dataset.route === "settings") {
-    if (dlg.open) dlg.close("cancel");
-    startAdd(pick.dataset.add);
-    return;
-  }
+  if (pick) { startAdd(pick.dataset.add); return; }
   const btn = e.target.closest("[data-sact]");
   if (!btn) return;
   const a = btn.dataset.sact;
@@ -793,8 +605,8 @@ view.addEventListener("click", async (e) => {
   const form = btn.closest("form") || card;
 
   if (a === "add") {
-    keepHubInputs();
-    dlg.innerHTML = `<form method="dialog" class="dlg"><h2>연결 추가</h2><p>추가할 시스템을 고르세요.</p>${typePicker()}
+    keepDrafts();
+    dlg.innerHTML = `<form method="dialog" class="dlg"><h2>연결 추가</h2><p>추가할 시스템을 고르세요. 같은 종류도 여러 개 추가할 수 있어요.</p>${pickerByCategory()}
       <div class="dlg-foot"><button class="btn" value="cancel">닫기</button></div></form>`;
     dlg.showModal();
     return;
@@ -818,76 +630,57 @@ view.addEventListener("click", async (e) => {
   }
   if (!card) return;
   const key = card.dataset.card;
-  const isHub = key.startsWith("hub:");
-  const i = isHub ? Number(key.split(":")[1]) : -1;
-  const def = isHub ? null : SECTION_DEFS.find((d) => d.key === key);
+  const type = card.dataset.type;
+  const id = card.dataset.id || null;
+  const meta = metaOf(type);
   const editing = card.tagName === "FORM";
+  const conn = id ? view._conns.find((c) => c.id === id) : null;
 
-  if (a === "edit") { keepHubInputs(); view._editing.add(key); drawSettings(); return; }
+  if (a === "edit") { keepDrafts(); view._editing.add(id); drawSettings(); return; }
   if (a === "cancel") {
-    keepHubInputs();
-    if (isHub) {
-      if (!view._hubs[i].orig_id) view._hubs.splice(i, 1);
-      else view._hubs[i] = { ...view._settings.hubitat.find((h) => h.id === view._hubs[i].orig_id), orig_id: view._hubs[i].orig_id };
-    } else {
-      view._adding.delete(key);
-    }
-    view._editing.delete(key);
+    keepDrafts();
+    delete view._drafts[key];
+    if (id) view._editing.delete(id);
+    else view._new = view._new.filter((n) => n.key !== key);
     drawSettings();
     return;
   }
 
-  // 입력값(편집 중) 또는 저장된 값(접힌 카드)
-  let body;
-  if (isHub) body = editing ? readHub(card, i) : { ...view._hubs[i] };
-  else body = editing ? readForm(card, def.fields) : view._settings[key];
+  const body = editing ? { type, id, ...readConn(card, meta) } : { type, id, name: conn.name, config: conn.config };
 
   if (a === "test") {
     btn.disabled = true; setResult(form, true, "연결하는 중…");
     try {
-      const r = await api(`/api/settings/test/${isHub ? "hubitat" : key}`, { method: "POST", body });
+      const r = await api("/api/connections/test", { method: "POST", body });
       setResult(form, r.ok, r.message);
     } catch (err) { setResult(form, false, err.message); } finally { btn.disabled = false; }
     return;
   }
   if (a === "save") {
-    if (isHub) {
-      const saved = view._hubs.filter((h, j) => h.orig_id && j !== i);
-      const list = [...saved, body];
-      view._hubs[i] = body;
-      if (await saveHubList(list, btn, "허브를 저장했습니다")) { /* 다시 그려짐 */ }
-      return;
-    }
     btn.disabled = true;
     try {
-      view._settings = await api(`/api/settings/${key}`, { method: "PUT", body });
-      view._adding.delete(key);
-      view._editing.delete(key);
-      keepHubInputs();
-      drawSettings();
-      toast(`${def.title} 연결을 저장했습니다`);
-    } catch (err) { setResult(form, false, err.message); } finally { btn.disabled = false; }
+      keepDrafts();
+      if (id) await api(`/api/connections/${encodeURIComponent(id)}`, { method: "PUT", body: { name: body.name, config: body.config } });
+      else await api("/api/connections", { method: "POST", body: { type, name: body.name, config: body.config } });
+      delete view._drafts[key];
+      if (id) view._editing.delete(id);
+      else view._new = view._new.filter((n) => n.key !== key);
+      await refreshConns(`${body.name || meta.title} 연결을 저장했습니다`);
+    } catch (err) { setResult(form, false, err.message); btn.disabled = false; }
     return;
   }
   if (a === "remove") {
-    const name = isHub ? (view._hubs[i].name || view._hubs[i].id) : def.title;
-    if (!(await confirmBox("연결을 삭제할까요?", `${name} 연결 정보를 지웁니다. 장비 자체에는 영향이 없습니다.`, "삭제"))) return;
-    if (isHub) {
-      const list = view._hubs.filter((h, j) => h.orig_id && j !== i);
-      view._hubs.splice(i, 1);
-      await saveHubList(list, btn, `${name} 연결을 삭제했습니다`);
-      return;
-    }
+    if (!(await confirmBox("연결을 삭제할까요?", `${conn.name} 연결 정보를 지웁니다. 장비 자체에는 영향이 없습니다.`, "삭제"))) return;
     try {
-      view._settings = await api(`/api/settings/${key}`, { method: "PUT", body: null });
-      keepHubInputs();
-      drawSettings();
-      toast(`${def.title} 연결을 삭제했습니다`);
+      keepDrafts();
+      await api(`/api/connections/${encodeURIComponent(id)}`, { method: "DELETE" });
+      view._editing.delete(id);
+      await refreshConns(`${conn.name} 연결을 삭제했습니다`);
     } catch (err) { toast(err.message, true); }
   }
 });
 
-// 연결 추가 대화상자 안의 종류 버튼
+// 대화상자 안의 종류 버튼 (연결 설정 · 백업 원격 저장소 공용)
 dlg.addEventListener("click", (e) => {
   const pick = e.target.closest("[data-add]");
   if (!pick || pick.disabled) return;
@@ -1184,7 +977,7 @@ view.addEventListener("click", async (e) => {
     const next = btn.getAttribute("aria-checked") !== "true";
     btn.setAttribute("aria-checked", String(next));
     try {
-      await api(`/api/smarthome/devices/${source}/${encodeURIComponent(hub)}/${encodeURIComponent(id)}/${next ? "on" : "off"}`, { method: "POST" });
+      await api(`/api/smarthome/devices/${encodeURIComponent(hub)}/${encodeURIComponent(id)}/${next ? "on" : "off"}`, { method: "POST" });
       const dev = view._sm.devices.find((x) => x.source === source && x.hub === hub && x.id === id);
       if (dev) dev.on = next;
     } catch (err) {
@@ -1197,26 +990,6 @@ view.addEventListener("click", async (e) => {
   if (!a) return;
   const k = (btn.dataset.k || "").split("|");
   switch (a) {
-    case "nas-reboot": return act(btn, { title: "NAS를 재부팅할까요?", message: "NAS의 모든 서비스가 잠시 중단됩니다.", path: "/api/infra/nas/reboot", done: "재부팅을 요청했습니다" });
-    case "pve-start": return act(btn, { path: `/api/infra/proxmox/${k[0]}/${k[1]}/${k[2]}/power/start`, confirm: false, done: "시작을 요청했습니다" });
-    case "pve-reboot": return act(btn, { title: `${k[2]}번 게스트를 재시작할까요?`, message: "게스트 OS에 재시작 신호를 보냅니다.", path: `/api/infra/proxmox/${k[0]}/${k[1]}/${k[2]}/power/reboot`, done: "재시작을 요청했습니다" });
-    case "pve-shutdown": return act(btn, { title: `${k[2]}번 게스트를 종료할까요?`, message: "정상 종료(shutdown) 신호를 보냅니다.", path: `/api/infra/proxmox/${k[0]}/${k[1]}/${k[2]}/power/shutdown`, done: "종료를 요청했습니다" });
-    case "pve-snap": return act(btn, { path: `/api/infra/proxmox/${k[0]}/${k[1]}/${k[2]}/snapshot`, confirm: false, done: "스냅샷을 요청했습니다", reload: false });
-    case "pve-backup": return act(btn, { path: `/api/infra/proxmox/${k[0]}/${k[2]}/backup`, confirm: false, done: "백업 작업을 시작했습니다", reload: false });
-    case "ct-start": return act(btn, { path: `/api/infra/portainer/${k[0]}/containers/${k[1]}/start`, confirm: false, done: `${k[2]} 시작` });
-    case "ct-restart": return act(btn, { title: `${k[2]} 컨테이너를 재시작할까요?`, message: "잠시 서비스가 끊길 수 있습니다.", path: `/api/infra/portainer/${k[0]}/containers/${k[1]}/restart`, done: `${k[2]} 재시작` });
-    case "ct-stop": return act(btn, { title: `${k[2]} 컨테이너를 중지할까요?`, message: "다시 시작하기 전까지 서비스가 멈춥니다.", path: `/api/infra/portainer/${k[0]}/containers/${k[1]}/stop`, done: `${k[2]} 중지` });
-    case "ct-logs":
-      try { const r = await api(`/api/infra/portainer/${k[0]}/containers/${k[1]}/logs?tail=300`); showText(`${k[2]} 로그 (최근 300줄)`, r.logs); }
-      catch (err) { toast(err.message, true); }
-      return;
-    case "stack-start": return act(btn, { path: `/api/infra/portainer/stacks/${k[0]}/start?endpoint=${k[1]}`, confirm: false, done: `${k[2]} 시작` });
-    case "stack-stop": return act(btn, { title: `${k[2]} 스택을 중지할까요?`, message: "스택의 모든 컨테이너가 멈춥니다.", path: `/api/infra/portainer/stacks/${k[0]}/stop?endpoint=${k[1]}`, done: `${k[2]} 중지` });
-    case "hub-backup": return act(btn, { path: `/api/hubs/hubitat/${encodeURIComponent(k[0])}/backup`, confirm: false, done: `${k[1]} 백업 저장` });
-    case "hub-reboot": return act(btn, { title: `${k[1]}를 재부팅할까요?`, message: "재부팅하는 동안(약 1~2분) 이 허브의 자동화가 멈춥니다.", path: `/api/hubs/hubitat/${encodeURIComponent(k[0])}/reboot`, done: "재부팅을 요청했습니다" });
-    case "ha-backup": return act(btn, { path: "/api/hubs/home-assistant/backup", confirm: false, done: "HA 백업", reload: false });
-    case "ha-restart": return act(btn, { title: "Home Assistant를 재시작할까요?", message: "재시작하는 동안 HA 자동화와 연동이 멈춥니다.", path: "/api/hubs/home-assistant/restart", done: "재시작을 요청했습니다" });
-    case "hb-restart": return act(btn, { title: "Homebridge를 재시작할까요?", message: "재시작하는 동안 HomeKit에서 Homebridge 기기가 응답 없음으로 보입니다.", path: "/api/hubs/homebridge/restart", done: "재시작을 요청했습니다" });
     case "ping-all":
       btn.disabled = true;
       try { pingCache = await api("/api/registry/devices/ping"); route(); }
@@ -1228,8 +1001,8 @@ view.addEventListener("click", async (e) => {
     case "pf-add": return saveRow("platforms", null, PLATFORM_FIELDS);
     case "pf-edit": return saveRow("platforms", k[0], PLATFORM_FIELDS, view._platforms.find((x) => String(x.id) === k[0]));
     case "pf-del": { const x = view._platforms.find((v) => String(v.id) === k[0]); return deleteRow("platforms", k[0], x ? x.name : "이"); }
-    case "path-add": return saveRow("paths", null, PATH_FIELDS);
-    case "path-edit": return saveRow("paths", k[0], PATH_FIELDS, view._sm.paths.find((x) => String(x.id) === k[0]));
+    case "path-add": return saveRow("paths", null, await pathFields());
+    case "path-edit": return saveRow("paths", k[0], await pathFields(), view._sm.paths.find((x) => String(x.id) === k[0]));
     case "path-del": { const x = view._sm.paths.find((v) => String(v.id) === k[0]); return deleteRow("paths", k[0], x ? `${x.src} → ${x.dst}` : "이"); }
   }
 });

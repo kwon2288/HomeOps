@@ -15,7 +15,7 @@ from .backup import service as backup_service
 from .config import Runtime, Settings, load_runtime
 from .core import Ctx, ctx
 from .db import Database
-from .routers import backup as backup_router, hubs, infra, registry, settings as settings_router, smarthome
+from .routers import backup as backup_router, connections, registry, settings as settings_router, smarthome
 from .store import SettingsStore
 
 STATIC = Path(__file__).with_name("static")
@@ -56,8 +56,7 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
         return response
 
     app.include_router(auth.router)
-    app.include_router(infra.router)
-    app.include_router(hubs.router)
+    app.include_router(connections.router)
     app.include_router(registry.router)
     app.include_router(smarthome.router)
     app.include_router(settings_router.router)
@@ -66,20 +65,6 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
     @app.get("/api/health")
     def health() -> dict:
         return {"ok": True, "version": VERSION}
-
-    @app.get("/api/systems", dependencies=[Depends(auth.require_user)])
-    def systems(request: Request) -> dict:
-        """어떤 시스템이 설정되어 있는지 (비밀값 제외)."""
-        s = ctx(request).settings
-        return {
-            "hubitat": [{"id": h.id, "name": h.name, "url": h.url, "role": h.role, "maker_api": bool(h.maker_api)}
-                        for h in s.hubitat],
-            "home_assistant": s.home_assistant.url if s.home_assistant else None,
-            "homebridge": s.homebridge.url if s.homebridge else None,
-            "synology": s.synology.url if s.synology else None,
-            "proxmox": s.proxmox.url if s.proxmox else None,
-            "portainer": s.portainer.url if s.portainer else None,
-        }
 
     @app.get("/api/audit", dependencies=[Depends(auth.require_user)])
     def audit(request: Request, limit: int = 100) -> list[dict]:

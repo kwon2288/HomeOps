@@ -5,8 +5,8 @@
 
 | 메뉴 | 대상 | 할 수 있는 일 |
 |---|---|---|
-| **인프라** | Synology NAS · Proxmox VE · Portainer | 볼륨·디스크·CPU·메모리 확인, NAS 재부팅 / VM·LXC 시작·종료·재시작·스냅샷·백업 / 컨테이너 시작·중지·재시작·로그, 스택 시작·중지 |
-| **스마트홈 허브** | Hubitat(여러 대) · Home Assistant · Homebridge + 수동 등록 기기 | 허브 상태·펌웨어·메모리·온도, 허브 백업(파일 보관)·재부팅, HA 백업·재시작, Homebridge 재시작 / API가 없는 기기(Apple TV, HomePod, Nest Hub, Aqara 허브 등)를 역할과 함께 등록하고 ping으로 응답 확인 / 플랫폼별 용도·기능·연결 경로 정리 |
+| **인프라** | Synology NAS · Proxmox VE · Portainer · UniFi Network · VMware vCenter · 웹 상태 확인 | 볼륨·디스크·CPU·메모리 확인, NAS 재부팅 / VM·LXC 시작·종료·재시작·스냅샷·백업 / 컨테이너 시작·중지·재시작·로그, 스택 시작·중지 / UniFi 장치 상태·재시작 / vCenter 호스트·VM 전원 |
+| **스마트홈 허브** | Hubitat · Home Assistant · Homebridge + 수동 등록 기기 | 허브 상태·펌웨어·메모리·온도, 허브 백업(파일 보관)·재부팅, HA 백업·재시작, Homebridge 재시작 / API가 없는 기기(Apple TV, HomePod, Nest Hub, Aqara 허브 등)를 역할과 함께 등록하고 ping으로 응답 확인 / 플랫폼별 용도·기능·연결 경로 정리 |
 | **스마트홈 연동** | 플랫폼 간 연동 경로 · 기기 | 연동 경로별 상태, 방별 기기 목록과 켜기/끄기, 배터리 부족·외출 중 열린 문·허브 무응답 알림 |
 | **연결 설정** | 위 모든 시스템 | **+ 연결 추가**로 쓰는 시스템만 골라 연결, 저장 전 **연결 테스트**, 연결별 편집·삭제, 알림 기준, 관리자 비밀번호 변경 |
 | **백업 · 복구** | HomeOps 데이터 전체 | 지금 백업 / 매일 자동 백업, 로컬과 **FTP(FTPS) · WebDAV**에 함께 저장, 보관 개수 자동 정리, 로컬·원격 목록이나 업로드한 파일로 복구 |
@@ -14,6 +14,8 @@
 - 재부팅·종료·중지 같은 위험한 작업은 확인 창을 한 번 더 거치고, 모든 제어·설정 변경은 **작업 기록**에 남습니다.
 - 휴대폰에서는 하단 탭 메뉴로 바뀝니다 (홈 화면에 추가해 앱처럼 쓸 수 있음).
 - 처음에는 아무것도 없는 상태로 시작합니다. 연결한 시스템만 각 메뉴에 나타나고, 빈 화면에서 바로 "+ 추가"로 연결할 수 있습니다.
+- 모든 종류를 **여러 개씩** 연결할 수 있습니다 (예: Proxmox 2대, NAS 2대).
+- 연동은 **플러그인 구조**라 새 시스템은 `app/integrations/`에 파일 하나만 추가하면 화면까지 자동으로 붙습니다 ([새 연동 추가하기](#새-연동-추가하기)).
 - 토큰·비밀번호는 암호화해서 저장하고, 화면에는 "저장됨"으로만 표시합니다. 바꿀 때만 새로 입력하면 됩니다.
 
 ## 설치
@@ -137,6 +139,9 @@ rm -rf /var/lib/homeops
 | Synology NAS | 주소, 전용 계정 | 제어판 → 사용자. 2단계 인증 끄기, 재부팅·스토리지 조회에 관리자 그룹 필요 |
 | Proxmox VE | 주소, 토큰 ID · Secret | Datacenter → Permissions → API Tokens. 권장 권한: VM.Audit, VM.PowerMgmt, VM.Snapshot, VM.Backup, Datastore.Audit, Datastore.AllocateSpace, Sys.Audit |
 | Portainer | 주소, Access Token | My account → Access tokens |
+| UniFi Network | 콘솔 주소, API 키 | UniFi 콘솔(UDR 등)의 Network 앱 → Settings → Integrations(버전에 따라 Control Plane → Integrations). 주소는 `https://192.168.0.1`처럼 콘솔 주소 그대로 |
+| VMware vCenter | 주소, vCenter 계정 | vCenter 7.0 U2 이상. VM 전원 제어에는 가상 머신 → 상호 작용 → 전원 권한 필요. 게스트 종료·재시작은 VMware Tools 필요. ESXi 단독 호스트는 아직 미지원 |
+| 웹 상태 확인 | 웹 주소 | 전용 연동이 없는 장비·서비스. 응답 여부와 응답 시간, 웹 화면 바로가기 (로그인 화면 401·403도 "응답"으로 봄) |
 
 ### Hubitat 참고
 
@@ -172,21 +177,71 @@ app/
   auth.py            첫 실행 계정 만들기, 로그인, 비밀번호 변경
   core.py            공통 헬퍼 (상태 감싸기, 작업 기록, ping)
   db.py              SQLite
-  connectors/        시스템별 API 클라이언트
-  routers/           infra · hubs · registry · smarthome · settings · backup
+  integrations/      연동 플러그인 (시스템 하나 = 파일 하나, 자동 등록)
+  connectors/        일부 연동이 쓰는 API 클라이언트
+  routers/           connections · registry · smarthome · settings · backup
   static/            웹 화면 (index.html, app.css, app.js — 빌드 과정 없음)
 tests/               pytest (외부 API는 respx로 흉내, FTP·WebDAV는 실제 서버를 띄워 확인)
 ```
+
+### 새 연동 추가하기
+
+`app/integrations/`에 파일 하나를 만들고 `Integration`을 상속한 클래스를 두면, 앱을 다시 시작할 때 자동으로 등록됩니다.
+"+ 연결 추가" 목록, 입력 폼, 연결 테스트, 상태 카드, 작업 버튼, 비밀값 암호화까지 클래스 선언만 보고 처리합니다.
+
+```python
+# app/integrations/mything.py
+from ..connectors.base import ConnectorError, make_client
+from .base import Integration, act, card, field, metric, row, section, url_field, verify_field
+
+
+class MyThing(Integration):
+    type = "mything"                  # 저장용 고유 이름 (바꾸지 않기)
+    title = "My Thing"                # 화면 이름
+    category = "infra"                # infra(인프라) | smarthome(스마트홈 허브)
+    desc = "목록에 보일 한 줄 설명"
+    help = "토큰을 만드는 곳 등 안내 (HTML 가능)"
+    fields = [
+        url_field("https://192.168.0.x"),
+        field("api_key", "API 키", secret=True, required=True),   # secret=True → 암호화 저장, 화면에 가림
+        verify_field(default=False),
+    ]
+
+    async def status(self) -> dict:
+        async with make_client(verify=self.cfg["verify_ssl"], headers={"X-API-Key": self.cfg["api_key"]}) as c:
+            data = (await c.get(self.cfg["url"] + "/api/status")).json()
+        return card(
+            summary=f"버전 {data['version']}",
+            metrics=[metric("CPU", data["cpu"], pct=data["cpu"], unit="%")],
+            sections=[section("장치", [row(d["name"], d["ip"], badge="온라인", tone="ok",
+                                          actions=[act("reboot", "재시작", danger=True, params={"id": d["id"]},
+                                                       confirm="이 장치를 재시작합니다.")]) for d in data["devices"]])],
+        )
+
+    async def action(self, action, params):
+        if action == "reboot":
+            ...  # params["id"] 로 재시작 요청
+            return "재시작을 요청했습니다"
+        raise ConnectorError("지원하지 않는 작업입니다")
+```
+
+- `status()`가 예외를 내면 카드에 "오류"와 메시지가 표시되고, 다른 연결은 그대로 보입니다.
+- `confirm`을 준 작업과 이름이 reboot·restart·shutdown·stop 인 작업은 서버도 확인을 요구합니다 (`confirm_required()`로 바꿀 수 있음).
+- 기기 목록·켜기/끄기를 스마트홈 연동 화면에 보태려면 `provides_devices = True`와 `devices()`, `command()`를 구현합니다 (`hubitat.py` 참고).
+- 테스트는 `tests/test_app.py`의 UniFi · vCenter 예처럼 respx로 API 응답을 흉내 내면 됩니다.
 
 ### 주요 API
 
 | 경로 | 설명 |
 |---|---|
 | `GET /api/auth/status` · `POST /api/auth/setup` | 첫 실행 여부 · 관리자 계정 만들기 |
-| `GET /api/settings` · `PUT /api/settings/{section}` | 연결 설정 조회(비밀값 가림) · 섹션별 저장 (`null`이면 연결 해제) |
-| `POST /api/settings/test/{section}` | 저장하지 않고 연결만 시험 |
-| `GET /api/infra` · `GET /api/hubs` · `GET /api/smarthome` | 메뉴별 상태 |
-| `POST /api/smarthome/devices/{HE\|HA}/{hub}/{id}/{on\|off}` | 기기 켜기/끄기 |
+| `GET /api/integrations` | 연동 종류와 입력 칸 선언 (화면이 이걸 보고 폼을 만듦) |
+| `GET/POST /api/connections` · `PUT/DELETE /api/connections/{id}` | 연결 목록(비밀값 가림) · 추가 · 수정 · 삭제 |
+| `POST /api/connections/test` | 저장하지 않고 연결만 시험 |
+| `GET /api/status?category=infra\|smarthome` | 메뉴별 상태 카드 |
+| `POST /api/connections/{id}/actions/{action}` | 카드의 작업 버튼 (본문 `{"params": {...}, "confirm": true}`) |
+| `GET /api/smarthome` · `POST /api/smarthome/devices/{연결 id}/{기기 id}/{on\|off}` | 연동 경로 · 기기 · 알림 · 기기 켜기/끄기 |
+| `GET /api/settings` · `PUT /api/settings/{alerts\|backup}` | 알림 기준 · 백업 설정 |
 | `GET/POST/PUT/DELETE /api/registry/{devices\|platforms\|paths}` | 수동 등록 · 플랫폼 역할 · 연동 경로 |
 | `GET /api/audit` | 작업 기록 |
 | `GET /api/backup` · `POST /api/backup/run` | 백업 상태·목록 · 지금 백업 |
@@ -196,6 +251,17 @@ tests/               pytest (외부 API는 respx로 흉내, FTP·WebDAV는 실�
 위험한 작업(재부팅·종료·중지·재시작)은 본문에 `{"confirm": true}`가 있어야 실행됩니다.
 
 ## 변경 이력
+
+### v0.6.0 — 2026-11-01
+- **연동을 플러그인 구조로 변경** — 새 시스템은 `app/integrations/`에 파일 하나만 추가하면 화면(연결 추가 목록, 입력 폼, 상태 카드, 작업 버튼)이 자동으로 만들어짐
+- **모든 종류를 여러 개씩 연결** 가능 (예: Proxmox 2대, NAS 2대)
+- 새 연동
+  - **UniFi Network** (UDR 등 UniFi OS 콘솔, 공식 Integration API): 장치 상태 · 클라이언트 수 · 장치 재시작
+  - **VMware vCenter** (7.0 U2 이상 REST API): 호스트 · VM 목록, VM 켜기 · 강제 끄기, 게스트 종료 · 재시작
+  - **웹 상태 확인**: 전용 연동이 없는 장비 · 서비스의 응답 여부와 웹 화면 바로가기 (인프라 / 스마트홈 허브 중 표시할 메뉴 선택)
+- 모든 상태 카드에 "웹 화면 열기" 바로가기
+- 연동 경로의 상태 확인 대상을 연결 목록에서 고르도록 변경
+- v0.5 이하에서 저장한 연결 설정은 처음 실행할 때 새 구조로 자동 이전 (토큰 유지)
 
 ### v0.5.1 — 2026-11-01
 - 업데이트 후에도 브라우저가 예전 화면을 보여 주던 문제 수정 (화면 파일을 매번 새 버전인지 확인)
