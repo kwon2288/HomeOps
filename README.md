@@ -25,7 +25,7 @@
 | 필요한 것 | Debian 12 / Ubuntu 24.04 LXC 하나 | 이미 쓰는 Docker + Portainer |
 | Docker | 필요 없음 | 기존 것 사용 |
 | 자원 | RAM 약 100MB, 디스크 1GB 미만 | 컨테이너 하나 |
-| 업데이트 | `homeops-update` | Portainer에서 스택 다시 배포 |
+| 업데이트 | `homeops-update` (끝나면 브라우저에서 새로 고침, 왼쪽 아래 버전으로 확인) | Portainer에서 스택 다시 배포 |
 
 ### A. LXC에 바로 설치 (Docker 없이)
 
@@ -44,7 +44,7 @@ git clone https://github.com/kwon2288/HomeOps.git /opt/homeops
 
 | 할 일 | 명령 |
 |---|---|
-| 업데이트 | `homeops-update` |
+| 업데이트 | `homeops-update` (끝나면 브라우저에서 새로 고침, 왼쪽 아래 버전으로 확인) |
 | 상태 · 로그 | `systemctl status homeops` · `journalctl -u homeops -f` |
 | 포트 바꾸기 | `HOMEOPS_PORT=9090 /opt/homeops/install.sh` |
 | 환경 변수 추가 | `/etc/default/homeops`에 `HOMEOPS_COOKIE_SECURE=true` 같은 줄 추가 후 `systemctl restart homeops` |
@@ -196,6 +196,10 @@ tests/               pytest (외부 API는 respx로 흉내, FTP·WebDAV는 실�
 위험한 작업(재부팅·종료·중지·재시작)은 본문에 `{"confirm": true}`가 있어야 실행됩니다.
 
 ## 변경 이력
+
+### v0.5.1 — 2026-11-01
+- 업데이트 후에도 브라우저가 예전 화면을 보여 주던 문제 수정 (화면 파일을 매번 새 버전인지 확인)
+- 왼쪽 메뉴 아래에 현재 버전 표시
 
 ### v0.5.0 — 2026-11-01
 - **아무것도 없는 상태로 시작**

@@ -50,6 +50,9 @@ def create_app(settings: Settings | None = None, runtime: Runtime | None = None)
         response.headers.setdefault("Referrer-Policy", "same-origin")
         if request.url.path.startswith("/api/"):
             response.headers.setdefault("Cache-Control", "no-store")
+        else:
+            # 화면 파일은 매번 새 버전인지 확인 (업데이트 후 예전 화면이 남지 않도록)
+            response.headers.setdefault("Cache-Control", "no-cache")
         return response
 
     app.include_router(auth.router)

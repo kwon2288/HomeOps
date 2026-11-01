@@ -1255,6 +1255,7 @@ async function route() {
 window.addEventListener("hashchange", () => { view.innerHTML = ""; route(); view.focus(); });
 
 (async () => {
+  api("/api/health").then((h) => { $("#app-version").textContent = `HomeOps v${h.version}`; }).catch(() => {});
   try {
     const st = await api("/api/auth/status");
     if (st.needs_setup) { showSetup(); return; }
