@@ -1,0 +1,72 @@
+"""HomeOps — 홈랩 · 스마트홈 통합 관리."""
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, Request
+from fastapi.staticfiles import StaticFiles
+
+from . import auth
+from .config import Runtime, Settings, load_runtime, load_settings
+from .core import Ctx, ctx
+from .db import Database
+from .routers import hubs, infra, registry, smarthome
+
+STATIC = Path(__file__).with_name("static")
+VERSION = "0.1.0"
+
+
+def create_app(settings: Settings | None = None, runtime: Runtime | None = None) -> FastAPI:
+    settings = settings or load_settings()
+    runtime = runtime or load_runtime()
+    seed = os.environ.get("HOMEOPS_SEED")
+    db = Database(runtime.db_path, Path(seed) if seed else None)
+
+    app = FastAPI(title="HomeOps", version=VERSION, docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.ctx = Ctx(settings=settings, runtime=runtime, db=db)
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "same-origin")
+        if request.url.path.startswith("/api/"):
+            response.headers.setdefault("Cache-Control", "no-store")
+        return response
+
+    app.include_router(auth.router)
+    app.include_router(infra.router)
+    app.include_router(hubs.router)
+    app.include_router(registry.router)
+    app.include_router(smarthome.router)
+
+    @app.get("/api/health")
+    def health() -> dict:
+        return {"ok": True, "version": VERSION}
+
+    @app.get("/api/systems", dependencies=[Depends(auth.require_user)])
+    def systems(request: Request) -> dict:
+        """어떤 시스템이 설정되어 있는지 (비밀값 제외)."""
+        s = ctx(request).settings
+        return {
+            "hubitat": [{"id": h.id, "name": h.name, "url": h.url, "role": h.role, "maker_api": bool(h.maker_api)}
+                        for h in s.hubitat],
+            "home_assistant": s.home_assistant.url if s.home_assistant else None,
+            "homebridge": s.homebridge.url if s.homebridge else None,
+            "synology": s.synology.url if s.synology else None,
+            "proxmox": s.proxmox.url if s.proxmox else None,
+            "portainer": s.portainer.url if s.portainer else None,
+        }
+
+    @app.get("/api/audit", dependencies=[Depends(auth.require_user)])
+    def audit(request: Request, limit: int = 100) -> list[dict]:
+        return ctx(request).db.audit_list(min(max(limit, 1), 500))
+
+    app.mount("/", StaticFiles(directory=STATIC, html=True), name="static")
+    return app
+
+
+def get_app() -> FastAPI:  # uvicorn --factory 용
+    return create_app()

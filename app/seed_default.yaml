@@ -1,0 +1,52 @@
+# 첫 실행 때 비어 있는 테이블에만 넣는 기본값입니다. 이후에는 웹 화면에서 편집하세요.
+# 다른 값으로 시작하려면 config/seed.yaml 을 만들고 HOMEOPS_SEED 로 지정하세요.
+
+manual_devices:
+  - name: Apple TV 4K
+    platform: HomeKit
+    roles: [HomeKit 홈 허브, Thread 보더 라우터]
+    memo: HomeKit 메인 허브.
+  - name: HomePod mini ×4
+    platform: HomeKit
+    roles: [HomeKit 홈 허브, Thread 보더 라우터, 음성 비서]
+    memo: Apple TV와 함께 HomeKit 허브 역할. 배터리 Thread 기기는 HomeKit·Hubitat에만 유지.
+  - name: Google Nest Hub
+    platform: Google Home
+    roles: [Thread 보더 라우터, 디스플레이]
+    memo: Thread 네트워크 NEST-PAN-804F.
+  - name: SmartThings Station
+    platform: SmartThings
+    roles: [SmartThings 허브, Thread 보더 라우터]
+    memo: Thread 합류 시 일회용 암호 요구로 통합 보류.
+  - name: Aqara 허브
+    platform: Aqara
+    roles: [Zigbee 코디네이터, Matter 브리지]
+    memo: Aqara 기기를 Matter·HomeKit Controller로 Hubitat에 연결.
+  - name: Homey Pro
+    platform: Homey
+    roles: [멀티 프로토콜 허브, 브리지]
+    memo: Homey Bridge 앱으로 Hubitat에 기기 가져오기.
+  - name: LG ThinQ ON
+    platform: LG ThinQ
+    roles: [가전 허브]
+    memo: LG 가전 연결. Hubitat에는 Cloud 방식으로 별도 연동.
+
+platforms:
+  - {name: Hubitat, use: 자동화 중심, features: "Zigbee·Matter 기기 관리, 자동화 규칙, 모드 · HSM", path: "허브 3대 (Zigbee 전용 / Matter 전용 / 자동화 전용)"}
+  - {name: HomeKit, use: 제어 화면, features: "아이폰 홈 앱 · Siri로 일상 제어", path: "Apple TV 4K + HomePod mini 4대 · Hubitat → HomeKit Integration 앱, Homebridge"}
+  - {name: Home Assistant, use: 보조 통합, features: "ESPHome Bluetooth Proxy, Hubitat에 없는 통합", path: "HA OS → Hubitat 연동"}
+  - {name: SmartThings, use: 일부 기기, features: "사운드바, 에너지미터, 스마트 베개", path: "SmartThings Station → HubiThings Replica → Hubitat Main"}
+  - {name: Aqara, use: 센서 · 버튼, features: Aqara 기기, path: "Aqara 허브 → Matter · HomeKit Controller → Hubitat 자동화 허브"}
+  - {name: LG ThinQ, use: 가전, features: "LG 가전 상태 · 제어", path: "ThinQ ON 허브 + Hubitat 자동화 허브 (Cloud)"}
+  - {name: Google Home, use: Thread 네트워크, features: "Nest Hub 화면, Thread 보더 라우터", path: Google Nest Hub}
+  - {name: Homey, use: 보조 허브, features: Homey 지원 기기, path: "Homey Pro → Homey Bridge 앱 → Hubitat"}
+
+# check_ref: 경로 상태를 판단할 시스템. hubitat:<허브 id> | homeassistant | homebridge | (비우면 확인 안 함)
+integration_paths:
+  - {src: SmartThings, via: HubiThings Replica, dst: Hubitat Main, check_ref: "hubitat:main"}
+  - {src: Hubitat, via: HomeKit Integration 앱, dst: HomeKit, check_ref: "hubitat:main"}
+  - {src: Hubitat, via: Homebridge, dst: HomeKit, check_ref: homebridge}
+  - {src: Aqara, via: Matter · HomeKit Controller, dst: Hubitat, check_ref: ""}
+  - {src: LG ThinQ, via: ThinQ Cloud, dst: Hubitat 자동화 허브, check_ref: ""}
+  - {src: Home Assistant, via: "[연동 방식]", dst: Hubitat, check_ref: homeassistant}
+  - {src: Homey Pro, via: Homey Bridge 앱, dst: Hubitat, check_ref: ""}
