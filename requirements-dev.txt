@@ -1,3 +1,6 @@
 -r requirements.txt
 pytest==8.*
 respx==0.22.*
+pyftpdlib>=2.0
+wsgidav>=4.3
+cheroot>=10

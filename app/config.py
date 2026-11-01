@@ -9,7 +9,9 @@ import os
 import secrets
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class MakerApi(BaseModel):
@@ -69,6 +71,57 @@ class AlertsCfg(BaseModel):
     battery_warn: int = Field(30, ge=1, le=100)
 
 
+class FtpCfg(BaseModel):
+    enabled: bool = False
+    host: str = ""
+    port: int = Field(21, ge=1, le=65535)
+    tls: bool = False  # FTPS (명시적 TLS)
+    username: str = ""
+    password: str = ""
+    path: str = "/homeops"
+
+    @model_validator(mode="after")
+    def _need_host(self):
+        if self.enabled and not self.host.strip():
+            raise ValueError("FTP 서버 주소를 입력하세요")
+        return self
+
+
+class WebDavCfg(BaseModel):
+    enabled: bool = False
+    url: str = ""  # 백업을 넣을 폴더 주소, 예: https://nas:5006/homeops/
+    username: str = ""
+    password: str = ""
+    verify_ssl: bool = True
+
+    @model_validator(mode="after")
+    def _need_url(self):
+        if self.enabled and not self.url.startswith(("http://", "https://")):
+            raise ValueError("WebDAV 주소는 http:// 또는 https:// 로 시작해야 합니다")
+        return self
+
+
+class BackupCfg(BaseModel):
+    password: str = ""  # 백업 파일 암호 (비어 있으면 백업 불가)
+    schedule_enabled: bool = False
+    schedule_time: str = Field("03:30", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    timezone: str = "Asia/Seoul"
+    keep_local: int = Field(14, ge=1, le=365)
+    keep_remote: int = Field(30, ge=1, le=365)
+    include_hub_backups: bool = False
+    ftp: FtpCfg = Field(default_factory=FtpCfg)
+    webdav: WebDavCfg = Field(default_factory=WebDavCfg)
+
+    @field_validator("timezone")
+    @classmethod
+    def _tz(cls, v: str) -> str:
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("시간대 이름이 올바르지 않습니다 (예: Asia/Seoul)") from exc
+        return v
+
+
 class Settings(BaseModel):
     hubitat: list[HubitatCfg] = Field(default_factory=list)
     home_assistant: HomeAssistantCfg | None = None
@@ -77,6 +130,7 @@ class Settings(BaseModel):
     proxmox: ProxmoxCfg | None = None
     portainer: PortainerCfg | None = None
     alerts: AlertsCfg = Field(default_factory=AlertsCfg)
+    backup: BackupCfg = Field(default_factory=BackupCfg)
 
     def hub(self, hub_id: str) -> HubitatCfg | None:
         return next((h for h in self.hubitat if h.id == hub_id), None)
@@ -90,15 +144,18 @@ SECTION_MODELS: dict[str, type[BaseModel]] = {
     "proxmox": ProxmoxCfg,
     "portainer": PortainerCfg,
     "alerts": AlertsCfg,
+    "backup": BackupCfg,
 }
 
 
 class Runtime(BaseModel):
     secret_key: str
+    secret_from_env: bool = False
     cookie_secure: bool | None  # None = HTTPS로 접속했을 때만 Secure 쿠키
     db_path: Path
     backup_dir: Path
     backup_keep: int
+    app_backup_dir: Path | None = None  # HomeOps 자체 백업 (기본: data/homeops-backups)
     # 환경 변수로 관리자 계정을 고정하고 싶을 때만 (보통은 웹에서 만든 계정 사용)
     admin_user: str | None = None
     admin_password: str | None = None
@@ -127,6 +184,12 @@ def load_runtime() -> Runtime:
         db_path=data_dir / "homeops.db",
         backup_dir=data_dir / "backups",
         backup_keep=int(os.environ.get("HOMEOPS_BACKUP_KEEP", "10")),
+        app_backup_dir=data_dir / "homeops-backups",
+        secret_from_env=bool(os.environ.get("HOMEOPS_SECRET_KEY")),
         admin_user=os.environ.get("HOMEOPS_ADMIN_USER") or None,
         admin_password=os.environ.get("HOMEOPS_ADMIN_PASSWORD") or None,
     )
+
+
+def app_backup_dir(rt: Runtime) -> Path:
+    return rt.app_backup_dir or rt.db_path.parent / "homeops-backups"

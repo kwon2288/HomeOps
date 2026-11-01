@@ -9,6 +9,7 @@
 | **스마트홈 허브** | Hubitat(여러 대) · Home Assistant · Homebridge + 수동 등록 기기 | 허브 상태·펌웨어·메모리·온도, 허브 백업(파일 보관)·재부팅, HA 백업·재시작, Homebridge 재시작 / API가 없는 기기(Apple TV, HomePod, Nest Hub, Aqara 허브 등)를 역할과 함께 등록하고 ping으로 응답 확인 / 플랫폼별 용도·기능·연결 경로 정리 |
 | **스마트홈 연동** | 플랫폼 간 연동 경로 · 기기 | 연동 경로별 상태, 방별 기기 목록과 켜기/끄기, 배터리 부족·외출 중 열린 문·허브 무응답 알림 |
 | **연결 설정** | 위 모든 시스템 | 주소·토큰 입력, 저장 전 **연결 테스트**, Hubitat 허브 추가·삭제, 알림 기준, 관리자 비밀번호 변경 |
+| **백업 · 복구** | HomeOps 데이터 전체 | 지금 백업 / 매일 자동 백업, 로컬과 **FTP(FTPS) · WebDAV**에 함께 저장, 보관 개수 자동 정리, 로컬·원격 목록이나 업로드한 파일로 복구 |
 
 - 재부팅·종료·중지 같은 위험한 작업은 확인 창을 한 번 더 거치고, 모든 제어·설정 변경은 **작업 기록**에 남습니다.
 - 휴대폰에서는 하단 탭 메뉴로 바뀝니다 (홈 화면에 추가해 앱처럼 쓸 수 있음).
@@ -48,7 +49,7 @@ docker compose up -d --build
 cd /opt/homeops && git pull && docker compose up -d --build
 ```
 
-데이터(계정, 연결 설정, 수동 등록 기기, 작업 기록, 허브 백업 파일)는 모두 `data/` 폴더에 있습니다. LXC를 옮길 때는 이 폴더만 복사하면 됩니다. `data/secret.key`가 없으면 저장된 토큰을 풀 수 없으니 함께 백업하세요.
+데이터(계정, 연결 설정, 수동 등록 기기, 작업 기록, 허브 백업 파일)는 모두 `data/` 폴더에 있습니다. 아래 **백업 · 복구** 기능을 쓰면 이 내용을 한 파일로 받아 두거나 다른 HomeOps로 옮길 수 있습니다.
 
 ### 외부 접속 (권장: NPM + HTTPS)
 
@@ -58,6 +59,25 @@ cd /opt/homeops && git pull && docker compose up -d --build
 2. 가능하면 Cloudflare Access(또는 국가 제한 + WAF 규칙)를 앞에 한 겹 더 두는 것을 권합니다.
 
 HTTPS로 접속하면 로그인 쿠키가 자동으로 Secure로 설정됩니다. 로그인은 5번 틀리면 해당 IP가 5분간 잠깁니다.
+
+## 백업과 복구
+
+**백업 · 복구** 메뉴에서 설정합니다.
+
+1. **백업 암호**를 먼저 정합니다. 백업 파일에는 토큰·비밀번호가 들어 있어 파일 전체를 이 암호로 암호화합니다. 암호를 잊으면 복구할 수 없으니 따로 적어 두세요.
+2. 필요하면 **FTP**(FTPS 가능)나 **WebDAV**(Synology WebDAV, Nextcloud 등)를 켜고 연결 테스트 후 저장합니다. 저장 폴더가 없으면 만듭니다.
+3. **지금 백업**을 누르거나 **매일 자동 백업** 시각을 정합니다 (기본 03:30, Asia/Seoul).
+
+| 항목 | 내용 |
+|---|---|
+| 백업 파일 | `homeops-YYYYMMDD-HHMMSS.hob` — 계정, 연결 설정, 수동 등록 기기, 플랫폼 역할, 연동 경로, 작업 기록, 암호화 키. 선택하면 Hubitat 허브 백업 파일(허브별 최신 1개)도 포함 |
+| 암호화 | 백업 암호 → scrypt로 키 생성 → Fernet(AES-128-CBC + HMAC-SHA256) |
+| 저장 위치 | 로컬 `data/homeops-backups/` + 켜 둔 FTP · WebDAV 전부 (원격 업로드가 실패해도 로컬에는 남고, 화면과 작업 기록에 실패가 표시됨) |
+| 보관 개수 | 로컬 기본 14개, 원격 기본 30개. 넘으면 오래된 것부터 지움 (HomeOps 백업 파일만) |
+| 복구 | 로컬 · FTP · WebDAV 목록에서 고르거나, PC에 받아 둔 `.hob` 파일을 올려서 복구. 복구 직전 상태는 로컬에 `-before-restore` 백업으로 자동 보관 |
+
+- 다른 LXC로 옮길 때: 새 HomeOps를 설치하고 계정을 만든 뒤, **파일로 복구**에서 백업 파일과 백업 암호를 넣으면 됩니다. 복구 후에는 백업 당시 계정으로 로그인합니다.
+- `HOMEOPS_SECRET_KEY` 환경 변수를 쓰고 있다면, 그 값이 백업 당시 키와 다를 때 토큰을 풀 수 없습니다 (복구 화면에 안내가 나옴).
 
 ## 연결 정보 준비하기
 
@@ -102,14 +122,15 @@ app/
   main.py            앱 생성, 라우터 연결
   config.py          설정 모델 · 환경 변수
   store.py           연결 설정·관리자 계정 저장 (비밀값 암호화)
+  backup/            백업 파일 만들기·열기, FTP·WebDAV, 백업·복구·자동 백업
   auth.py            첫 실행 계정 만들기, 로그인, 비밀번호 변경
   core.py            공통 헬퍼 (상태 감싸기, 작업 기록, ping)
   db.py              SQLite
   seed_default.yaml  첫 실행 기본값
   connectors/        시스템별 API 클라이언트
-  routers/           infra · hubs · registry · smarthome · settings
+  routers/           infra · hubs · registry · smarthome · settings · backup
   static/            웹 화면 (index.html, app.css, app.js — 빌드 과정 없음)
-tests/               pytest (외부 API는 respx로 흉내)
+tests/               pytest (외부 API는 respx로 흉내, FTP·WebDAV는 실제 서버를 띄워 확인)
 ```
 
 ### 주요 API
@@ -123,5 +144,35 @@ tests/               pytest (외부 API는 respx로 흉내)
 | `POST /api/smarthome/devices/{HE\|HA}/{hub}/{id}/{on\|off}` | 기기 켜기/끄기 |
 | `GET/POST/PUT/DELETE /api/registry/{devices\|platforms\|paths}` | 수동 등록 · 플랫폼 역할 · 연동 경로 |
 | `GET /api/audit` | 작업 기록 |
+| `GET /api/backup` · `POST /api/backup/run` | 백업 상태·목록 · 지금 백업 |
+| `GET /api/backup/remote/{ftp\|webdav}` · `POST /api/backup/test/{ftp\|webdav}` | 원격 목록 · 연결 테스트 |
+| `POST /api/backup/restore` · `POST /api/backup/restore-upload` | 목록에서 복구 · 파일 올려서 복구 |
 
 위험한 작업(재부팅·종료·중지·재시작)은 본문에 `{"confirm": true}`가 있어야 실행됩니다.
+
+## 변경 이력
+
+### v0.3.0 — 2026-11-01
+- **백업 · 복구** 메뉴 추가
+  - 지금 백업, 매일 정해진 시각 자동 백업 (시간대 설정)
+  - 로컬 저장과 함께 **FTP(FTPS) · WebDAV** 업로드, 연결 테스트, 저장 폴더 자동 생성
+  - 백업 파일 전체를 백업 암호로 암호화 (토큰·비밀번호 보호)
+  - 로컬·원격 보관 개수 자동 정리
+  - 로컬·FTP·WebDAV 목록 또는 업로드한 파일로 복구, 복구 직전 상태 자동 백업
+  - Hubitat 허브 백업 파일 포함 옵션
+- 다른 설치(다른 암호화 키)로 옮겨도 토큰을 그대로 쓸 수 있도록 키를 함께 복구
+- 시간 입력 등 기본 입력 요소를 어두운 테마로 표시
+
+### v0.2.0 — 2026-11-01
+- 첫 접속 때 웹에서 관리자 계정 만들기, 비밀번호 변경
+- **연결 설정** 화면: Hubitat 허브 추가·삭제, HA · Homebridge · NAS · Proxmox · Portainer 입력과 연결 테스트
+- 연결 정보를 DB에 저장하고 토큰·비밀번호는 암호화 (`data/secret.key` 자동 생성), 저장 즉시 반영
+- `.env` · `config.yaml` 없이 `docker compose up`만으로 실행
+- 로그인 실패 메시지가 표시되지 않던 문제 수정
+
+### v0.1.0 — 2026-11-01
+- 첫 버전: 인프라(Synology NAS · Proxmox VE · Portainer), 스마트홈 허브(Hubitat · Home Assistant · Homebridge), 스마트홈 연동(연동 경로 · 기기 제어 · 알림)
+- 수동 등록 기기 · 플랫폼 역할 · 연동 경로 관리
+- 관리자 로그인, 위험 작업 확인 창, 작업 기록
+- Docker · docker-compose 배포
+

@@ -20,16 +20,42 @@ from .db import Database
 
 MASK = "__SET__"
 
-# 섹션별 비밀값 필드
+# 섹션별 비밀값 필드 (점으로 하위 객체 지정)
 SECRET_FIELDS: dict[str, list[str]] = {
     "home_assistant": ["token"],
     "homebridge": ["password"],
     "synology": ["password"],
     "proxmox": ["token_secret"],
     "portainer": ["api_key"],
+    "backup": ["password", "ftp.password", "webdav.password"],
 }
-# Hubitat 허브 안의 비밀값 (하위 객체, 필드)
-HUB_SECRETS = [("maker_api", "token"), ("login", "password")]
+# Hubitat 허브마다 들어 있는 비밀값
+HUB_SECRETS = ["maker_api.token", "login.password"]
+
+
+def _get(obj: Any, path: str) -> Any:
+    for part in path.split("."):
+        if not isinstance(obj, dict):
+            return None
+        obj = obj.get(part)
+    return obj
+
+
+def _set(obj: Any, path: str, value: Any) -> None:
+    *parents, last = path.split(".")
+    for part in parents:
+        if not isinstance(obj, dict) or not isinstance(obj.get(part), dict):
+            return
+        obj = obj[part]
+    if isinstance(obj, dict):
+        obj[last] = value
+
+
+def _map_paths(item: Any, paths: list[str], fn: Callable[[str], str]) -> None:
+    for path in paths:
+        v = _get(item, path)
+        if v:
+            _set(item, path, fn(v))
 
 
 def _map_section(section: str, data: Any, fn: Callable[[str], str]) -> Any:
@@ -38,13 +64,9 @@ def _map_section(section: str, data: Any, fn: Callable[[str], str]) -> Any:
     data = copy.deepcopy(data)
     if section == "hubitat":
         for hub in data:
-            for obj, field in HUB_SECRETS:
-                if hub.get(obj) and hub[obj].get(field):
-                    hub[obj][field] = fn(hub[obj][field])
+            _map_paths(hub, HUB_SECRETS, fn)
     else:
-        for field in SECRET_FIELDS.get(section, []):
-            if data.get(field):
-                data[field] = fn(data[field])
+        _map_paths(data, SECRET_FIELDS.get(section, []), fn)
     return data
 
 
@@ -57,26 +79,28 @@ def masked(settings: Settings) -> dict[str, Any]:
     return map_secrets(settings.model_dump(), lambda _v: MASK)
 
 
+def _keep(item: Any, previous: Any, paths: list[str]) -> None:
+    for path in paths:
+        if _get(item, path.rsplit(".", 1)[0]) is None and "." in path:
+            continue  # 하위 객체가 없으면 건너뜀 (예: 허브 로그인 안 씀)
+        value, prev = _get(item, path), _get(previous, path)
+        if value in (None, "", MASK):
+            _set(item, path, prev if prev else "")
+
+
 def merge_section(section: str, new: Any, old: Any) -> Any:
     """화면에서 받은 섹션 값에서 MASK/빈 비밀값을 기존 값으로 채운다."""
     if new is None:
         return None
     new = copy.deepcopy(new)
-
-    def keep(value: Any, previous: Any) -> Any:
-        return previous if value in (None, "", MASK) and previous else ("" if value == MASK else value)
-
     if section == "hubitat":
         old_by_id = {h["id"]: h for h in (old or [])}
         for hub in new:
             prev = old_by_id.get(hub.get("orig_id") or hub.get("id"), {})
             hub.pop("orig_id", None)
-            for obj, field in HUB_SECRETS:
-                if hub.get(obj) is not None:
-                    hub[obj][field] = keep(hub[obj].get(field), (prev.get(obj) or {}).get(field))
+            _keep(hub, prev, HUB_SECRETS)
     else:
-        for field in SECRET_FIELDS.get(section, []):
-            new[field] = keep(new.get(field), (old or {}).get(field))
+        _keep(new, old or {}, SECRET_FIELDS.get(section, []))
     return new
 
 

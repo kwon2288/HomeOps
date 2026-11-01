@@ -22,7 +22,7 @@ SECTIONS = {"hubitat", *SECTION_MODELS}
 HUBS = TypeAdapter(list[HubitatCfg])
 LABELS = {
     "hubitat": "Hubitat", "home_assistant": "Home Assistant", "homebridge": "Homebridge",
-    "synology": "Synology NAS", "proxmox": "Proxmox VE", "portainer": "Portainer", "alerts": "알림",
+    "synology": "Synology NAS", "proxmox": "Proxmox VE", "portainer": "Portainer", "alerts": "알림", "backup": "백업",
 }
 
 
@@ -30,13 +30,16 @@ def _validation_message(exc: ValidationError) -> str:
     first = exc.errors()[0]
     field = str(first["loc"][-1]) if first["loc"] else ""
     names = {"url": "주소", "id": "허브 ID", "name": "이름", "app_id": "Maker API App ID", "username": "아이디",
-             "token_id": "토큰 ID", "battery_warn": "배터리 경고 기준"}
+             "token_id": "토큰 ID", "battery_warn": "배터리 경고 기준", "schedule_time": "자동 백업 시각",
+             "keep_local": "로컬 보관 개수", "keep_remote": "원격 보관 개수", "port": "포트"}
     label = names.get(field, field)
     if first["type"] == "string_pattern_mismatch":
         if field == "url":
             return "주소는 http:// 또는 https:// 로 시작해야 합니다"
         if field == "id":
             return "허브 ID는 영문 소문자·숫자·-·_ 로만 입력하세요 (예: main)"
+    if first["type"] == "value_error":
+        return str(first.get("ctx", {}).get("error") or first["msg"]).replace("Value error, ", "")
     if first["type"] == "missing":
         return f"{label}을(를) 입력하세요"
     if first["type"] in ("string_too_short",):
@@ -59,8 +62,8 @@ def _build(section: str, data: Any, request: Request) -> Any:
                 raise HTTPException(400, "허브 ID가 겹칩니다")
             return hubs
         if data is None:
-            if section == "alerts":
-                raise HTTPException(400, "알림 설정은 지울 수 없습니다")
+            if section in ("alerts", "backup"):
+                raise HTTPException(400, "이 설정은 지울 수 없습니다")
             return None
         merged = merge_section(section, data, old)
         return SECTION_MODELS[section](**merged)
@@ -96,7 +99,7 @@ def save_section(section: str, request: Request, data: Any = Body(None)) -> dict
 @router.post("/test/{section}")
 async def test_section(section: str, request: Request, data: Any = Body(None)) -> dict:
     """저장하지 않고 입력값으로 연결만 시험한다. hubitat은 허브 하나를 보낸다."""
-    if section not in SECTIONS or section == "alerts":
+    if section not in SECTIONS or section in ("alerts", "backup"):
         raise HTTPException(404, "알 수 없는 설정")
     try:
         if section == "hubitat":

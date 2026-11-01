@@ -18,6 +18,7 @@ HUB = {"id": "main", "name": "Hubitat Main", "url": "http://hub.test",
 def test_api_requires_login(runtime):
     c = make_client(Settings(), runtime, login=False)
     assert c.get("/api/infra").status_code == 401
+    assert c.get("/api/backup").status_code == 401
     assert c.get("/api/health").status_code == 200
     assert c.get("/").status_code == 200  # 정적 화면은 열림
 

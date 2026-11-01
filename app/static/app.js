@@ -520,7 +520,7 @@ function inputHtml(f, value, idPrefix) {
   const v = f.secret ? "" : (value ?? f.def ?? "");
   const ph = isSet ? "저장됨 · 바꿀 때만 입력" : (f.ph || "");
   return `<label class="field${f.full ? " full" : ""}" for="${id}"><span class="field-label">${esc(f.label)}${isSet ? ' <span class="badge ok">저장됨</span>' : ""}</span>
-    <input id="${id}" name="${f.name}" ${f.secret ? 'type="password" autocomplete="new-password"' : 'autocomplete="off"'} ${f.type === "number" ? 'inputmode="numeric"' : ""} value="${esc(v)}" placeholder="${esc(ph)}"></label>`;
+    <input id="${id}" name="${f.name}" ${f.secret ? 'type="password" autocomplete="new-password"' : 'autocomplete="off"'} ${f.type === "number" ? 'inputmode="numeric"' : ""} ${f.type === "time" ? 'type="time"' : ""} value="${esc(v)}" placeholder="${esc(ph)}"></label>`;
 }
 
 function readForm(form, fields) {
@@ -603,7 +603,8 @@ function drawSettings(me) {
   const byGroup = (g) => SECTION_DEFS.filter((d) => d.group === g).map((d) => sectionCard(d, s[d.key])).join("");
   view.innerHTML = `
     <header class="page-head"><div><h1>연결 설정</h1><p>허브와 서버의 주소·토큰을 입력하세요. 토큰과 비밀번호는 암호화되어 저장되고 화면에 다시 표시되지 않습니다.</p></div>
-      <a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="#/log">작업 기록</a></header>
+      <div class="chips"><a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="#/backup">백업 · 복구</a>
+      <a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="#/log">작업 기록</a></div></header>
 
     <section class="section"><div class="section-head"><div><h2>Hubitat 허브</h2>
       <p>허브마다 Apps → Add Built-In App → <b>Maker API</b>를 설치하고, "Allow Access via Local IP Address"를 켠 뒤 관리할 기기를 고르세요. 예시 URL의 <code>/apps/api/<b>App ID</b>/…?access_token=<b>토큰</b></code>을 아래에 넣습니다.</p></div>
@@ -744,6 +745,230 @@ view.addEventListener("click", async (e) => {
   }
 });
 
+/* ---------- 백업 · 복구 ---------- */
+const BK_GENERAL = [
+  { name: "password", label: "백업 암호 (백업 파일 전체를 암호화)", secret: true, full: true },
+  { name: "schedule_enabled", label: "매일 자동 백업", type: "bool", def: false },
+  { name: "schedule_time", label: "자동 백업 시각", type: "time", def: "03:30" },
+  { name: "timezone", label: "시간대", def: "Asia/Seoul" },
+  { name: "keep_local", label: "로컬 보관 개수", type: "number", def: 14 },
+  { name: "keep_remote", label: "원격 보관 개수", type: "number", def: 30 },
+  { name: "include_hub_backups", label: "Hubitat 허브 백업 파일(허브별 최신 1개) 포함", type: "bool", def: false },
+];
+const BK_FTP = [
+  { name: "enabled", label: "FTP에도 저장", type: "bool", def: false },
+  { name: "host", label: "서버 주소", ph: "192.168.0.x 또는 nas.local" },
+  { name: "port", label: "포트", type: "number", def: 21 },
+  { name: "tls", label: "FTPS (TLS) 사용", type: "bool", def: false },
+  { name: "username", label: "아이디" },
+  { name: "password", label: "비밀번호", secret: true },
+  { name: "path", label: "저장 폴더 (없으면 만듭니다)", def: "/homeops", full: true },
+];
+const BK_DAV = [
+  { name: "enabled", label: "WebDAV에도 저장", type: "bool", def: false },
+  { name: "url", label: "폴더 주소 (없으면 만듭니다)", ph: "https://192.168.0.x:5006/backup/homeops", full: true },
+  { name: "username", label: "아이디" },
+  { name: "password", label: "비밀번호", secret: true },
+  { name: "verify_ssl", label: "HTTPS 인증서 검증 (자체 서명 인증서면 끄기)", type: "bool", def: true },
+];
+let backupTab = "local";
+
+function fmtSize(n) {
+  if (n === null || n === undefined) return "—";
+  if (n < 1024) return `${n} B`;
+  if (n < 1048576) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1048576).toFixed(1)} MB`;
+}
+function backupDate(name) {
+  const m = /^homeops-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(-.+)?\.hob$/.exec(name);
+  if (!m) return name;
+  return `${m[1]}.${m[2]}.${m[3]} ${m[4]}:${m[5]}${m[7] === "-before-restore" ? " · 복구 전 자동" : ""}`;
+}
+
+async function renderBackup() {
+  const [st, s] = await Promise.all([api("/api/backup"), api("/api/settings")]);
+  view._bk = st;
+  view._settings = s;
+  if (backupTab !== "local" && !st.targets[backupTab]) backupTab = "local";
+  await drawBackup();
+}
+
+function bkForm(kind, title, sub, fields, value, extraButtons) {
+  return `<form class="card" data-bk="${kind}" novalidate>
+    <div class="card-title"><h2>${esc(title)}</h2><small>${esc(sub)}</small></div>
+    <div class="form-grid">${fields.map((f) => inputHtml(f, value[f.name], `bk-${kind}`)).join("")}</div>
+    <p class="test-result" role="status" aria-live="polite"></p>
+    <div class="actions">${extraButtons}<button type="button" class="btn primary" data-bact="save">저장</button></div></form>`;
+}
+
+async function drawBackup() {
+  const st = view._bk;
+  const b = view._settings.backup;
+  const last = st.last;
+  const uploads = last && last.uploads ? Object.entries(last.uploads).map(([k, v]) =>
+    `<span class="badge ${v === "성공" ? "ok" : "bad"}" title="${esc(v)}">${k.toUpperCase()} ${v === "성공" ? "성공" : "실패"}</span>`).join("") : "";
+  const lastCard = !last ? '<div class="empty">아직 백업한 적이 없습니다</div>'
+    : `<div class="row" style="border:none"><div class="row-main"><b>${esc(new Date(last.time).toLocaleString("ko-KR"))} · ${esc(last.reason)}</b>
+      <small>${last.name ? esc(last.name) + " · " + fmtSize(last.size) : esc(last.error || "")}${last.hub_files ? ` · 허브 백업 ${last.hub_files}개 포함` : ""}</small></div>
+      <span class="badge ${last.ok ? "ok" : "bad"}">${last.ok ? "성공" : "일부 실패"}</span></div>
+      ${uploads ? `<div class="chips" style="gap:6px">${uploads}</div>` : ""}
+      ${Object.values(last.uploads || {}).filter((v) => v !== "성공").map((v) => `<p class="test-result bad">${esc(v)}</p>`).join("")}`;
+
+  const tabs = [["local", "로컬"], ...(st.targets.ftp ? [["ftp", "FTP"]] : []), ...(st.targets.webdav ? [["webdav", "WebDAV"]] : [])];
+  let files = st.local, listErr = "";
+  if (backupTab !== "local") {
+    try { files = await api(`/api/backup/remote/${backupTab}`); } catch (e) { files = []; listErr = e.message; }
+  }
+  const rows = files.map((f) => `<div class="row"><div class="row-main"><b>${esc(backupDate(f.name))}</b><small class="mono">${esc(f.name)} · ${fmtSize(f.size)}</small></div>
+    <div class="row-act">
+      ${backupTab === "local" ? `<a class="btn sm" style="display:inline-flex;align-items:center;text-decoration:none" href="/api/backup/local/${encodeURIComponent(f.name)}" download>받기</a>` : ""}
+      <button class="btn sm" data-bact="restore" data-k="${esc(f.name)}">복구</button>
+      ${backupTab === "local" ? `<button class="btn sm danger" data-bact="delete" data-k="${esc(f.name)}">삭제</button>` : ""}
+    </div></div>`).join("");
+
+  view.innerHTML = `
+    <header class="page-head"><div><h1>백업 · 복구</h1><p>계정, 연결 설정, 수동 등록 기기, 플랫폼 역할, 연동 경로, 작업 기록을 한 파일로 백업합니다.</p></div>
+      <div class="chips"><a class="btn" style="display:inline-flex;align-items:center;text-decoration:none" href="#/settings">연결 설정</a>
+      <button class="btn primary" data-bact="run" ${st.password_set ? "" : "disabled title=\"백업 암호를 먼저 저장하세요\""}>지금 백업</button></div></header>
+
+    ${st.password_set ? "" : '<div class="alert warn"><span class="ico" aria-hidden="true">!</span><div><b>백업 암호를 먼저 정하세요</b><p>백업 파일에는 토큰과 비밀번호가 들어 있어 암호로 전체를 잠급니다. 이 암호를 잊으면 백업을 복구할 수 없으니 따로 적어 두세요.</p></div></div>'}
+
+    <div class="grid wide">
+      <section class="card"><div class="card-title"><h2>마지막 백업</h2></div>${lastCard}</section>
+      <section class="card"><div class="card-title"><h2>다음 자동 백업</h2></div>
+        <p style="margin:0;font-size:18px">${st.next_run ? esc(new Date(st.next_run).toLocaleString("ko-KR", { dateStyle: "medium", timeStyle: "short" })) : "꺼져 있음"}</p>
+        <small class="muted">${st.next_run ? `매일 ${esc(b.schedule_time)} (${esc(b.timezone)}) · 로컬 ${b.keep_local}개, 원격 ${b.keep_remote}개 보관` : "아래 백업 설정에서 켤 수 있습니다"}</small>
+        <small class="muted">저장 위치: 로컬${st.targets.ftp ? " · FTP" : ""}${st.targets.webdav ? " · WebDAV" : ""}</small></section>
+    </div>
+
+    <section class="section"><div class="section-head"><h2>백업 설정</h2></div>
+      <div class="grid wide">
+        ${bkForm("general", "기본", "암호 · 자동 백업 · 보관 개수", BK_GENERAL, b, "")}
+        ${bkForm("ftp", "FTP", "FTP / FTPS 서버", BK_FTP, b.ftp, '<button type="button" class="btn" data-bact="test" data-k="ftp">연결 테스트</button>')}
+        ${bkForm("webdav", "WebDAV", "Synology WebDAV, Nextcloud 등", BK_DAV, b.webdav, '<button type="button" class="btn" data-bact="test" data-k="webdav">연결 테스트</button>')}
+      </div></section>
+
+    <section class="section"><div class="section-head"><h2>백업 파일</h2>
+      <div class="filters" role="group" aria-label="저장 위치">${tabs.map(([k, l]) => `<button type="button" data-btab="${k}" aria-pressed="${k === backupTab}">${l}</button>`).join("")}</div></div>
+      <div class="list">${listErr ? `<div class="empty" style="border:none">${esc(listErr)}</div>` : rows || '<div class="empty" style="border:none">백업 파일이 없습니다</div>'}</div>
+    </section>
+
+    <section class="section"><div class="section-head"><div><h2>파일로 복구</h2><p>다른 PC에 받아 둔 백업 파일(.hob)이나 다른 HomeOps에서 만든 백업으로 되돌립니다.</p></div></div>
+      <form class="card" id="restore-upload" novalidate>
+        <div class="form-grid">
+          <label class="field full">백업 파일<input type="file" name="file" accept=".hob"></label>
+          <label class="field full">백업 암호 (이 HomeOps에 저장된 암호와 같으면 비워 두세요)<input type="password" name="password" autocomplete="off"></label>
+        </div>
+        <p class="test-result" role="status" aria-live="polite"></p>
+        <div class="actions"><button type="button" class="btn danger" data-bact="upload-restore">이 파일로 복구</button></div>
+      </form>
+    </section>`;
+}
+
+function readBackupForms() {
+  const g = readForm(view.querySelector('form[data-bk="general"]'), BK_GENERAL);
+  const ftp = readForm(view.querySelector('form[data-bk="ftp"]'), BK_FTP);
+  const dav = readForm(view.querySelector('form[data-bk="webdav"]'), BK_DAV);
+  return {
+    ...g, keep_local: Number(g.keep_local) || 14, keep_remote: Number(g.keep_remote) || 30,
+    ftp: { ...ftp, port: Number(ftp.port) || 21 },
+    webdav: dav,
+  };
+}
+
+async function restoreDialog(where) {
+  const r = await openDialog(`<form method="dialog" class="dlg" id="rbox"><h2>이 백업으로 복구할까요?</h2>
+    <p>${esc(where)}</p>
+    <p>지금의 계정·연결 설정·수동 등록 기기·작업 기록이 백업 시점으로 바뀝니다. 복구 직전 상태는 로컬에 자동으로 한 번 백업해 둡니다. 복구 후에는 다시 로그인해야 할 수 있습니다.</p>
+    <label class="field">백업 암호 (저장된 암호와 같으면 비워 두세요)<input type="password" name="password" autocomplete="off"></label>
+    <div class="dlg-foot"><button class="btn" value="cancel" formnovalidate>취소</button><button class="btn danger" value="ok">복구</button></div></form>`);
+  if (r !== "ok") return null;
+  return { password: $("#rbox", dlg).elements.password.value };
+}
+
+async function afterRestore(res) {
+  const msg = [`${res.created ? new Date(res.created).toLocaleString("ko-KR") + " 백업으로 " : ""}복구했습니다.`];
+  if (res.safety_backup) msg.push(`복구 전 상태는 ${res.safety_backup} 으로 남겨 두었습니다.`);
+  if (res.warning) msg.push(res.warning);
+  await openDialog(`<form method="dialog" class="dlg"><h2>복구 완료</h2>${msg.map((m) => `<p>${esc(m)}</p>`).join("")}
+    <div class="dlg-foot"><button class="btn primary" value="ok">확인</button></div></form>`);
+  try { await api("/api/auth/me"); route(); } catch (_) { showLogin(); }
+}
+
+view.addEventListener("click", async (e) => {
+  const tab = e.target.closest("[data-btab]");
+  if (tab) { backupTab = tab.dataset.btab; view.querySelector(".list").innerHTML = '<p class="skeleton" style="padding:16px">불러오는 중…</p>'; await drawBackup(); return; }
+  const btn = e.target.closest("[data-bact]");
+  if (!btn) return;
+  const a = btn.dataset.bact;
+  const form = btn.closest("form");
+
+  if (a === "save") {
+    btn.disabled = true;
+    try {
+      view._settings = await api("/api/settings/backup", { method: "PUT", body: readBackupForms() });
+      view._bk = await api("/api/backup");
+      await drawBackup();
+      toast("백업 설정을 저장했습니다");
+    } catch (err) { setResult(form, false, err.message); } finally { btn.disabled = false; }
+    return;
+  }
+  if (a === "test") {
+    btn.disabled = true; setResult(form, true, "연결하는 중…");
+    try {
+      const r = await api(`/api/backup/test/${btn.dataset.k}`, { method: "POST", body: readBackupForms() });
+      setResult(form, r.ok, r.message);
+    } catch (err) { setResult(form, false, err.message); } finally { btn.disabled = false; }
+    return;
+  }
+  if (a === "run") {
+    btn.disabled = true; btn.textContent = "백업하는 중…";
+    try {
+      const r = await api("/api/backup/run", { method: "POST", body: {} });
+      const fails = Object.entries(r.uploads).filter(([, v]) => v !== "성공");
+      toast(fails.length ? `로컬에는 저장했지만 ${fails.map(([k]) => k.toUpperCase()).join(", ")} 업로드 실패` : "백업했습니다", fails.length > 0);
+      view._bk = await api("/api/backup");
+      await drawBackup();
+    } catch (err) { toast(err.message, true); btn.disabled = false; btn.textContent = "지금 백업"; }
+    return;
+  }
+  if (a === "delete") {
+    if (!(await confirmBox("백업 파일을 삭제할까요?", backupDate(btn.dataset.k), "삭제"))) return;
+    try {
+      await api(`/api/backup/local/${encodeURIComponent(btn.dataset.k)}/delete`, { method: "POST", body: { confirm: true } });
+      view._bk = await api("/api/backup"); await drawBackup(); toast("삭제했습니다");
+    } catch (err) { toast(err.message, true); }
+    return;
+  }
+  if (a === "restore") {
+    const where = `${{ local: "로컬", ftp: "FTP", webdav: "WebDAV" }[backupTab]} · ${backupDate(btn.dataset.k)}`;
+    const ans = await restoreDialog(where);
+    if (!ans) return;
+    btn.disabled = true;
+    try {
+      const res = await api("/api/backup/restore", { method: "POST", body: { source: backupTab, name: btn.dataset.k, password: ans.password, confirm: true } });
+      await afterRestore(res);
+    } catch (err) { toast(err.message, true); btn.disabled = false; }
+    return;
+  }
+  if (a === "upload-restore") {
+    const f = form.elements.file.files[0];
+    if (!f) { setResult(form, false, "백업 파일을 고르세요"); return; }
+    if (!(await confirmBox("이 파일로 복구할까요?", `${f.name} — 지금 데이터가 백업 시점으로 바뀝니다. 복구 직전 상태는 로컬에 자동으로 백업해 둡니다.`, "복구"))) return;
+    btn.disabled = true; setResult(form, true, "복구하는 중…");
+    try {
+      const res = await fetch("/api/backup/restore-upload", {
+        method: "POST", credentials: "same-origin", body: f,
+        headers: { "Content-Type": "application/octet-stream", "X-Confirm": "yes", "X-Backup-Password": encodeURIComponent(form.elements.password.value) },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401) { showLogin(); return; }
+      if (!res.ok) throw new Error(data.detail || `복구 실패 (HTTP ${res.status})`);
+      await afterRestore(data);
+    } catch (err) { setResult(form, false, err.message); } finally { btn.disabled = false; }
+  }
+});
+
 /* ---------- 이벤트 ---------- */
 view.addEventListener("click", async (e) => {
   const btn = e.target.closest("button, [data-room]");
@@ -806,7 +1031,7 @@ view.addEventListener("click", async (e) => {
 });
 
 /* ---------- 라우팅 ---------- */
-const ROUTES = { infra: renderInfra, hubs: renderHubs, integration: renderIntegration, log: renderLog, settings: renderSettings };
+const ROUTES = { infra: renderInfra, hubs: renderHubs, integration: renderIntegration, log: renderLog, settings: renderSettings, backup: renderBackup };
 
 async function route() {
   const name = (location.hash.replace(/^#\/?/, "") || "integration").split("?")[0];

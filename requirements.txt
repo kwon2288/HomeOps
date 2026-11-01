@@ -5,3 +5,4 @@ pyyaml==6.0.*
 itsdangerous==2.2.*
 pydantic==2.*
 cryptography>=43
+tzdata>=2024.1
