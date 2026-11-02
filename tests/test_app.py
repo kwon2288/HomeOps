@@ -388,3 +388,30 @@ def test_proxmox_node_stats_without_sys_audit(runtime):
     card = c.get("/api/status/proxmox").json()["card"]
     m = {x["label"]: x["value"] for x in card["metrics"]}
     assert (m["노드 CPU"], m["노드 메모리"], m["루트 디스크"]) == ("7.0%", "25.0%", "30.0%") and not card["note"]
+
+
+@respx.mock
+def test_synology_disks_hidden_unless_problem(runtime):
+    nas = "https://nas.test:5001"
+    respx.get(f"{nas}/webapi/auth.cgi").mock(return_value=httpx.Response(200, json={"success": True, "data": {"sid": "s"}}))
+    disks = [{"name": "드라이브 1", "model": "WD", "status": "normal", "smart_status": "normal", "temp": 36},
+             {"name": "드라이브 2", "model": "WD", "status": "normal", "smart_status": "normal", "temp": 37}]
+
+    def entry(request):
+        api = request.url.params["api"]
+        if api == "SYNO.Core.System":
+            return httpx.Response(200, json={"success": True, "data": {"model": "DS918+", "firmware_ver": "DSM 7.2"}})
+        if api == "SYNO.Core.System.Utilization":
+            return httpx.Response(200, json={"success": True, "data": {"cpu": {"user_load": 5}, "memory": {"real_usage": 30}}})
+        return httpx.Response(200, json={"success": True, "data": {"disks": disks, "volumes": [
+            {"display_name": "volume_1", "status": "normal", "size": {"total": "1e13", "used": "5e12"}}]}})
+    respx.get(f"{nas}/webapi/entry.cgi").mock(side_effect=entry)
+    c = make_client(Settings(connections=[conn("synology", "nas", url=nas, username="u", password="p"),
+                                          conn("synology", "nas2", url=nas, username="u", password="p", show_disks=True)]), runtime)
+    titles = lambda cid: [s["title"] for s in c.get(f"/api/status/{cid}").json()["card"]["sections"]]
+    assert titles("nas") == ["볼륨"]                      # 디스크는 기본으로 숨김
+    assert titles("nas2") == ["볼륨", "디스크"]
+    disks[1]["smart_status"] = "failing"
+    secs = c.get("/api/status/nas").json()["card"]["sections"]
+    assert [s["title"] for s in secs] == ["볼륨", "문제 있는 디스크"]
+    assert [r["name"] for r in secs[1]["rows"]] == ["드라이브 2"] and secs[1]["rows"][0]["badge"] == "SMART failing"

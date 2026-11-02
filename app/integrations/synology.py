@@ -25,6 +25,8 @@ class SynologyNas(Integration):
         field("password", "비밀번호", secret=True, required=True),
         field("otp_code", "2단계 인증 코드 (켠 계정만, 처음 한 번)", ph="6자리 — 저장하면 기기로 등록되고 이후엔 필요 없음"),
         field("device_id", "등록된 기기 ID", kind="hidden", secret=True),
+        field("show_disks", "카드에 디스크 목록도 표시", kind="bool", default=False,
+              help="꺼 두어도 문제가 있는 디스크는 항상 보여 줍니다"),
         verify_field(default=False),
     ]
 
@@ -65,6 +67,10 @@ class SynologyNas(Integration):
         n = await self._client().status()
         ver = str(n.get("version") or "")
         vol = (n["volumes"] or [{}])[0]
+        # 디스크 목록은 설정에서 켰을 때만. 꺼 두어도 정상이 아닌 디스크는 보여 준다
+        def bad(d: dict) -> bool:
+            return d["status"] not in (None, "normal") or d.get("smart") not in (None, "normal", "safe")
+        disks = n["disks"] if self.cfg.get("show_disks") else [d for d in n["disks"] if bad(d)]
         return card(
             summary=" · ".join(p for p in (n.get("model"), ver if ver.startswith("DSM") else f"DSM {ver}",
                                            f"가동 {uptime(n.get('uptime'))}" if uptime(n.get("uptime")) else "") if p),
@@ -78,10 +84,10 @@ class SynologyNas(Integration):
                 section("볼륨", [row(v["name"], f"{'정상' if v['status'] == 'normal' else v['status']} · {v['total_tb']}TB",
                                     badge=f"{round(v['used_pct'])}%" if v.get("used_pct") is not None else None,
                                     tone="warn" if (v.get("used_pct") or 0) >= 85 else "") for v in n["volumes"]]),
-                section("디스크", [row(d["name"], f"{d['model']} · {d['temp']}°C" if d.get("temp") else d["model"],
-                                     badge="정상" if d["status"] == "normal" else (d["status"] or "—"),
-                                     tone="ok" if d["status"] == "normal" else "warn") for d in n["disks"]]),
-            ],
+            ] + ([section("디스크" if self.cfg.get("show_disks") else "문제 있는 디스크",
+                          [row(d["name"], f"{d['model']} · {d['temp']}°C" if d.get("temp") else d["model"],
+                               badge="정상" if not bad(d) else (d["status"] if d["status"] not in (None, "normal") else f"SMART {d.get('smart')}"),
+                               tone="ok" if not bad(d) else "warn") for d in disks])] if disks else []),
             actions=[act("reboot", "재부팅", danger=True, confirm="NAS의 모든 서비스가 잠시 중단됩니다.")],
         )
 
