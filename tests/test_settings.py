@@ -76,7 +76,7 @@ def test_migrates_old_settings(runtime):
     c = make_client(Settings(), runtime)
     store = c.app.state.ctx.store
     old = {
-        "hubitat": [{"id": "main", "name": "Main", "url": "http://192.168.0.80", "role": "자동화",
+        "hubitat": [{"id": "main", "name": "Main", "url": "http://192.168.0.10", "role": "자동화",
                      "maker_api": {"app_id": 7, "token": store._enc("hub-token")}, "login": None}],
         "home_assistant": {"url": "http://ha:8123", "token": store._enc("ha-token"), "verify_ssl": True},
         "alerts": {"battery_warn": 20},

@@ -18,7 +18,7 @@ class HubitatHub(Integration):
             '관리할 기기를 고르세요. 예시 URL의 <code>/apps/api/<b>App ID</b>/…?access_token=<b>토큰</b></code>을 넣으면 됩니다. '
             '메모리·온도·백업·재부팅은 허브 관리 화면의 비공식 URL을 쓰므로 펌웨어에 따라 값이 비어 있을 수 있습니다.')
     fields = [
-        field("url", "허브 주소", kind="url", required=True, ph="http://192.168.0.80"),
+        field("url", "허브 주소", kind="url", required=True, ph="http://192.168.0.x"),
         field("role", "역할", ph="예: Zigbee 전용"),
         field("app_id", "Maker API App ID", kind="number", ph="예: 12"),
         field("token", "Maker API Access Token", secret=True),
