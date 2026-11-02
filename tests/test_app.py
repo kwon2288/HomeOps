@@ -363,3 +363,26 @@ def test_portainer_order_problems_running_then_stopped(runtime):
     assert [r["name"] for r in rows] == ["loop", "zigbee", "Alpha", "bitwarden", "cloudflared"]
     assert [r["badge"] for r in rows] == ["재시작 반복", "unhealthy", None, None, "중지"]
     assert [r["name"] for r in secs[1]["rows"]] == ["npm", "old"]
+
+
+@respx.mock
+def test_proxmox_node_stats_without_sys_audit(runtime):
+    """Sys.Audit 없는 토큰: /nodes 에 CPU · 메모리가 빠져 있음 → 노드 상세 시도 → 안 되면 "—"와 권한 안내."""
+    base = "https://pve.test:8006/api2/json"
+    respx.get(f"{base}/version").mock(return_value=httpx.Response(200, json={"data": {"version": "9.2.4"}}))
+    respx.get(f"{base}/nodes").mock(return_value=httpx.Response(200, json={"data": [{"node": "pve", "status": "online"}]}))
+    respx.get(f"{base}/cluster/resources").mock(return_value=httpx.Response(200, json={"data": []}))
+    detail = respx.get(f"{base}/nodes/pve/status").mock(return_value=httpx.Response(403))
+    pve = conn("proxmox", "proxmox", url="https://pve.test:8006", token_id="a@pve!b", token_secret="s")
+    c = make_client(Settings(connections=[pve]), runtime)
+    card = c.get("/api/status/proxmox").json()["card"]
+    m = {x["label"]: x for x in card["metrics"]}
+    assert m["노드 CPU"]["value"] == "—" and m["노드 메모리"]["value"] == "—"   # 0%로 보이지 않게
+    assert "PVEAuditor" in card["note"]
+
+    # 노드 상세는 읽히는 경우 (권한 범위가 다를 때)
+    detail.mock(return_value=httpx.Response(200, json={"data": {"cpu": 0.07, "memory": {"used": 8e9, "total": 32e9},
+                                                                  "rootfs": {"used": 3e10, "total": 1e11}, "uptime": 3600}}))
+    card = c.get("/api/status/proxmox").json()["card"]
+    m = {x["label"]: x["value"] for x in card["metrics"]}
+    assert (m["노드 CPU"], m["노드 메모리"], m["루트 디스크"]) == ("7.0%", "25.0%", "30.0%") and not card["note"]

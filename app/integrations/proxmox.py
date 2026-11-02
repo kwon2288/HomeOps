@@ -14,7 +14,9 @@ class ProxmoxVE(Integration):
     desc = "VM · LXC 전원 · 스냅샷 · 백업"
     order = 20
     help = ("Datacenter → Permissions → <b>API Tokens</b>에서 만든 토큰입니다. 토큰 ID는 <code>사용자@realm!토큰이름</code> 형식이에요. "
-            "권장 권한: VM.Audit, VM.PowerMgmt, VM.Snapshot, VM.Backup, Datastore.Audit, Datastore.AllocateSpace, Sys.Audit")
+            "권장 권한: VM.Audit, VM.PowerMgmt, VM.Snapshot, VM.Backup, Datastore.Audit, Datastore.AllocateSpace, Sys.Audit. "
+            "노드 CPU · 메모리 · 디스크는 <b>Sys.Audit</b>(역할 PVEAuditor)이 있어야 보입니다. 토큰의 Privilege Separation이 켜져 있으면 "
+            "권한을 토큰에도 따로 주세요.")
     fields = [
         url_field("https://192.168.0.x:8006"),
         field("token_id", "토큰 ID", required=True, ph="homeops@pve!dashboard"),
@@ -55,6 +57,9 @@ class ProxmoxVE(Integration):
                 metric("루트 디스크", node.get("disk_pct"), node.get("disk_pct"), "%"),
                 metric("실행 중 VM/LXC", f"{p['running']} / {len(p['guests'])}"),
             ],
+            note=("노드 CPU · 메모리 · 디스크를 읽을 권한이 없습니다 — Datacenter → Permissions → Add → API Token Permission에서 "
+                  "경로 /nodes, 이 토큰, 역할 PVEAuditor를 추가하세요 (토큰의 Privilege Separation이 켜져 있으면 사용자 권한과 별도로 "
+                  "토큰에도 줘야 합니다)") if node.get("needs_audit") else "",
             sections=[section("VM · LXC", rows, empty="게스트가 없습니다")],
         )
 

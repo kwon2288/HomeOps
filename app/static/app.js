@@ -220,8 +220,8 @@ function statusCardInner(st, opts = { rows: -1 }, loading = false) {
   const link = st.link ? `<a class="card-link" href="${esc(st.link)}" target="_blank" rel="noopener noreferrer">웹 화면 열기 ↗</a>` : "";
   if (!st.card) {
     if (st.online === undefined) return `${head}<div class="skeleton-lines" aria-hidden="true"><i></i><i></i><i></i></div>`;
-    return `${head}<div class="empty">연결하지 못했습니다: ${esc(st.error || "")}
-      <br><a href="#/settings">연결 설정</a>에서 주소와 토큰을 확인하세요.</div>${link}`;
+    return `${head}<div class="card-scroll"><div class="empty">연결하지 못했습니다: ${esc(st.error || "")}
+      <br><a href="#/settings">연결 설정</a>에서 주소와 토큰을 확인하세요.</div>${link}</div>`;
   }
   const c = st.card;
   const metrics = c.metrics.length ? `<dl class="metrics">${c.metrics.map((x) => `<div class="metric"><dt>${esc(x.label)}</dt><dd>${esc(x.value)}</dd>
@@ -243,7 +243,7 @@ function statusCardInner(st, opts = { rows: -1 }, loading = false) {
     }).join("");
   }
   const actions = c.actions.length ? `<div class="actions">${c.actions.map((a) => actionButton(st.id, a, false)).join("")}</div>` : "";
-  return `${head}${c.note ? `<p class="muted small-line">${esc(c.note)}</p>` : ""}${metrics}${sections}${actions}${link}`;
+  return `${head}<div class="card-scroll">${c.note ? `<p class="muted small-line">${esc(c.note)}</p>` : ""}${metrics}${sections}${actions}${link}</div>`;
 }
 
 /* ---------- 대시보드 (인프라 · 스마트홈 허브의 상태 카드) ----------
@@ -252,6 +252,8 @@ function statusCardInner(st, opts = { rows: -1 }, loading = false) {
 const statusCache = {};
 const DASH = { page: null, category: null, conns: [], layout: null, draft: null, editing: false, loading: new Set(), seq: 0, dragId: null };
 const ROW_CHOICES = [[0, "요약만"], [3, "3줄"], [5, "5줄"], [10, "10줄"], [-1, "전부"]];
+const HEIGHT_CHOICES = [["s", "같은 크기 · 작게"], ["m", "같은 크기 · 보통"], ["l", "같은 크기 · 크게"], ["auto", "내용에 맞춤"]];
+const dashHeight = () => dashLayout().height || "m";
 
 const dashLayout = () => (DASH.editing ? DASH.draft : DASH.layout);
 function cardOpts(id) { return { size: "m", rows: 5, hidden: false, ...(dashLayout().cards[id] || {}) }; }
@@ -300,8 +302,9 @@ function dashButtons() {
 
 function dashGridHtml() {
   const hidden = DASH.conns.filter((c) => cardOpts(c.id).hidden).length;
-  return `${DASH.editing ? '<p class="dash-help">카드를 끌어서 옮기거나 ◀ ▶로 순서를 바꾸세요. 2칸으로 넓히고, 목록 줄 수를 정하고, 안 보고 싶은 카드는 숨길 수 있어요.</p>' : ""}
-    <div class="grid dash${DASH.editing ? " editing" : ""}" id="dash-grid">${orderedConns().map(dashCardHtml).join("")}</div>
+  return `${DASH.editing ? `<div class="dash-help"><label>카드 높이 <select class="sm-select" data-dashheight>${HEIGHT_CHOICES.map(([v, t]) => `<option value="${v}" ${v === dashHeight() ? "selected" : ""}>${t}</option>`).join("")}</select></label>
+      <span>카드를 끌어서 옮기거나 ◀ ▶로 순서를 바꾸세요. 2칸으로 넓히고, 목록 줄 수를 정하고, 안 보고 싶은 카드는 숨길 수 있어요.</span></div>` : ""}
+    <div class="grid dash${DASH.editing ? " editing" : ""}${dashHeight() === "auto" ? "" : ` uniform h-${dashHeight()}`}" id="dash-grid">${orderedConns().map(dashCardHtml).join("")}</div>
     ${!DASH.editing && hidden ? `<p class="muted small-line">숨긴 카드 ${hidden}개 · <button type="button" class="linklike" data-dashmode="edit">대시보드 편집에서 보이기</button></p>` : ""}`;
 }
 
@@ -309,6 +312,7 @@ function dashGridHtml() {
 const dashFitObs = "ResizeObserver" in window ? new ResizeObserver((entries) => entries.forEach((en) => fitCard(en.target))) : null;
 function fitCard(el) {
   if (!el.isConnected) { if (dashFitObs) dashFitObs.unobserve(el); return; }
+  if (el.parentElement && el.parentElement.classList.contains("uniform")) { el.style.gridRowEnd = ""; return; }
   el.style.gridRowEnd = `span ${Math.ceil((el.getBoundingClientRect().height + 14) / 2)}`;
 }
 function dashFit() {
@@ -391,7 +395,7 @@ view.addEventListener("click", async (e) => {
     } else if (m === "cancel") {
       DASH.editing = false;
     } else if (m === "reset") {
-      DASH.draft = { order: [], cards: {} };
+      DASH.draft = { height: "m", order: [], cards: {} };
     } else if (m === "save") {
       try {
         DASH.layout = await api(`/api/layout/${DASH.page}`, { method: "PUT", body: DASH.draft });
@@ -413,6 +417,8 @@ view.addEventListener("click", async (e) => {
 });
 
 view.addEventListener("change", (e) => {
+  const h = e.target.closest("select[data-dashheight]");
+  if (h) { DASH.draft.height = h.value; dashPaintAll(); return; }
   const t = e.target.closest('select[data-dash="rows"]');
   if (t) dashSetCard(t.closest("[data-cid]").dataset.cid, { rows: Number(t.value) });
 });

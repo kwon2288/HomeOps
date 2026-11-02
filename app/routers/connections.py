@@ -211,6 +211,7 @@ class CardLayout(BaseModel):
 
 
 class Layout(BaseModel):
+    height: Literal["s", "m", "l", "auto"] = "m"   # 카드 높이: 모두 같은 크기(작게 · 보통 · 크게) 또는 내용에 맞춤
     order: list[str] = Field(default_factory=list, max_length=300)
     cards: dict[str, CardLayout] = Field(default_factory=dict, max_length=300)
 

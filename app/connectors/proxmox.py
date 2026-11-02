@@ -38,14 +38,35 @@ class Proxmox:
             version = self._data(await c.get(f"{self.base}/version")) or {}
             nodes = self._data(await c.get(f"{self.base}/nodes")) or []
             guests = self._data(await c.get(f"{self.base}/cluster/resources", params={"type": "vm"})) or []
-        node_list = [{
-            "name": n.get("node"),
-            "status": n.get("status"),
-            "cpu_pct": round((n.get("cpu") or 0) * 100, 1),
-            "mem_pct": round((n.get("mem") or 0) / n["maxmem"] * 100, 1) if n.get("maxmem") else None,
-            "disk_pct": round((n.get("disk") or 0) / n["maxdisk"] * 100, 1) if n.get("maxdisk") else None,
-            "uptime": n.get("uptime"),
-        } for n in nodes]
+            node_list = []
+            for n in nodes:
+                node = {
+                    "name": n.get("node"), "status": n.get("status"),
+                    "cpu_pct": round(n["cpu"] * 100, 1) if n.get("cpu") is not None and n.get("maxmem") else None,
+                    "mem_pct": round((n.get("mem") or 0) / n["maxmem"] * 100, 1) if n.get("maxmem") else None,
+                    "disk_pct": round((n.get("disk") or 0) / n["maxdisk"] * 100, 1) if n.get("maxdisk") else None,
+                    "uptime": n.get("uptime"), "needs_audit": False,
+                }
+                # 토큰에 Sys.Audit 권한이 없으면 /nodes 가 CPU · 메모리 · 디스크 값을 빼고 준다 → 노드 상세로 한 번 더
+                if node["mem_pct"] is None and node["status"] == "online" and SAFE_NODE.match(node["name"] or ""):
+                    try:
+                        d = self._data(await c.get(f"{self.base}/nodes/{node['name']}/status")) or {}
+                        mem, root = d.get("memory") or {}, d.get("rootfs") or {}
+                        if d.get("cpu") is not None:
+                            node["cpu_pct"] = round(d["cpu"] * 100, 1)
+                        if mem.get("total"):
+                            node["mem_pct"] = round(mem.get("used", 0) / mem["total"] * 100, 1)
+                        if root.get("total"):
+                            node["disk_pct"] = round(root.get("used", 0) / root["total"] * 100, 1)
+                        node["uptime"] = node["uptime"] or d.get("uptime")
+                    except httpx.HTTPStatusError as exc:
+                        if exc.response.status_code in (401, 403):
+                            node["needs_audit"] = True
+                    except (httpx.HTTPError, ValueError, TypeError, ZeroDivisionError):
+                        pass
+                    if node["mem_pct"] is None:
+                        node["needs_audit"] = True
+                node_list.append(node)
         guest_list = sorted([{
             "node": g.get("node"),
             "type": g.get("type"),

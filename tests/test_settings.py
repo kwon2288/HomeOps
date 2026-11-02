@@ -179,12 +179,14 @@ def test_synology_two_factor_device_token(client):
 
 
 def test_dashboard_layout(client):
-    assert client.get("/api/layout/infra").json() == {"order": [], "cards": {}}
+    assert client.get("/api/layout/infra").json() == {"height": "m", "order": [], "cards": {}}
     body = {"order": ["proxmox", "synology"], "cards": {"proxmox": {"size": "l", "rows": 3}, "synology": {"hidden": True}}}
     saved = client.put("/api/layout/infra", json=body).json()
     assert saved["cards"]["proxmox"] == {"size": "l", "rows": 3, "hidden": False}
     assert client.get("/api/layout/infra").json() == saved
     assert client.get("/api/layout/hubs").json()["order"] == []          # 화면마다 따로
     assert client.put("/api/layout/infra", json={"cards": {"x": {"rows": 7}}}).status_code == 422
+    assert client.put("/api/layout/infra", json={"height": "auto"}).json()["height"] == "auto"
+    assert client.put("/api/layout/infra", json={"height": "huge"}).status_code == 422
     assert client.put("/api/layout/nope", json={}).status_code == 404
     assert client.get("/api/status/nope").status_code == 404

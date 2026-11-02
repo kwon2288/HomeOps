@@ -79,7 +79,7 @@ git clone https://github.com/kwon2288/HomeOps.git /opt/homeops
 1. `http://<설치한 곳 IP>:8080` 접속 → **관리자 계정 만들기** (처음 한 번만 나오는 화면)
 2. **연결 설정** 화면에서 "무엇부터 연결할까요?"에 나오는 시스템 중 쓰는 것만 골라 입력하고 **연결 테스트 → 저장**. 나머지는 나중에 **+ 연결 추가**로 언제든 붙입니다
 3. 저장하는 즉시 각 메뉴에 반영됩니다 (재시작 필요 없음)
-4. 인프라 · 스마트홈 허브 화면의 **대시보드 편집**으로 카드 순서(끌어서 옮기기), 크기(1칸 · 2칸), 목록 줄 수(요약만 · 3 · 5 · 10 · 전부), 숨기기를 정할 수 있습니다. 배치는 서버에 저장되어 PC와 휴대폰에서 같게 보입니다
+4. 인프라 · 스마트홈 허브 화면의 **대시보드 편집**으로 카드 높이(모두 같은 크기 작게 · 보통 · 크게, 또는 내용에 맞춤), 카드 순서(끌어서 옮기기), 크기(1칸 · 2칸), 목록 줄 수(요약만 · 3 · 5 · 10 · 전부), 숨기기를 정할 수 있습니다. 배치는 서버에 저장되어 PC와 휴대폰에서 같게 보입니다
 
 > 처음 계정 만들기 화면은 계정이 없을 때 누구나 열 수 있습니다. 설치 직후 바로 계정을 만들고, 그 전에는 외부에 열지 마세요.
 
@@ -153,7 +153,7 @@ rm -rf /var/lib/homeops
 | Home Assistant | 주소, 장기 액세스 토큰 | HA 프로필 → 보안 → 장기 액세스 토큰 |
 | Homebridge | 주소, UI 로그인 계정 | config-ui-x 계정. 액세서리 목록·HB 배지는 insecure 모드(-I) 필요 |
 | Synology NAS | 주소, 계정 (전용 계정 권장) | 제어판 → 사용자. 재부팅·스토리지 조회에 관리자 그룹 필요. **2단계 인증을 켠 계정**이면 처음 저장할 때 인증 앱의 6자리 코드를 함께 넣으면 HomeOps가 DSM의 신뢰할 수 있는 기기로 등록되어 이후엔 코드 없이 로그인 (개인 설정 → 보안 → 신뢰할 수 있는 기기에서 해제 가능) |
-| Proxmox VE | 주소, 토큰 ID · Secret | Datacenter → Permissions → API Tokens. 권장 권한: VM.Audit, VM.PowerMgmt, VM.Snapshot, VM.Backup, Datastore.Audit, Datastore.AllocateSpace, Sys.Audit |
+| Proxmox VE | 주소, 토큰 ID · Secret | Datacenter → Permissions → API Tokens. 권장 권한: VM.Audit, VM.PowerMgmt, VM.Snapshot, VM.Backup, Datastore.Audit, Datastore.AllocateSpace, Sys.Audit. 노드 CPU · 메모리 · 디스크는 **Sys.Audit**(역할 PVEAuditor, 경로 `/nodes`)이 있어야 보임. 토큰의 Privilege Separation이 켜져 있으면 권한을 **토큰에도** 따로 줘야 함 |
 | Portainer | 주소, Access Token | My account → Access tokens |
 | UniFi Network | 콘솔 주소, API 키 | UniFi 콘솔(UDR 등)의 Network 앱 → Settings → Integrations(버전에 따라 Control Plane → Integrations). 주소는 `https://192.168.0.1`처럼 콘솔 주소 그대로 |
 | VMware vCenter | 주소, vCenter 계정 | vCenter 7.0 U2 이상. VM 전원 제어에는 가상 머신 → 상호 작용 → 전원 권한 필요. 게스트 종료·재시작은 VMware Tools 필요. ESXi 단독 호스트는 아직 미지원 |
@@ -273,6 +273,12 @@ class MyThing(Integration):
 위험한 작업(재부팅·종료·중지·재시작)은 본문에 `{"confirm": true}`가 있어야 실행됩니다.
 
 ## 변경 이력
+
+### v0.9.1 — 2026-11-02
+- **대시보드 카드를 모두 같은 크기로**: 기본은 모든 카드가 같은 높이(보통)이고, 넘치는 내용은 카드 안에서 스크롤. 대시보드 편집에서 작게 · 보통 · 크게 · 내용에 맞춤 중 선택 (화면마다 저장)
+- **Proxmox 노드 CPU · 메모리 · 루트 디스크가 안 나오던 문제**: API 토큰에 Sys.Audit 권한이 없으면 Proxmox가 이 값을 빼고 보냄
+  - 노드 상세(`/nodes/{노드}/status`)로 한 번 더 시도
+  - 그래도 못 읽으면 "0%" 대신 "—"로 표시하고, 카드에 필요한 권한(경로 `/nodes`, 역할 PVEAuditor)을 안내
 
 ### v0.9.0 — 2026-11-02
 - **SwitchBot 연동 추가** (Open API v1.1, 클라우드)

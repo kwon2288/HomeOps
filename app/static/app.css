@@ -294,3 +294,17 @@ details.xrow > .row-act { justify-content: flex-start; padding: 0 0 10px; }
 .dash-card.dragging { opacity: .3; }
 .dash-card.drop-before { box-shadow: -4px 0 0 var(--accent); }
 .dash-card.drop-after { box-shadow: 4px 0 0 var(--accent); }
+
+/* 같은 크기 카드: 높이를 맞추고 넘치는 내용은 카드 안에서 스크롤 */
+.card-scroll { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.grid.dash.uniform { grid-auto-rows: var(--dash-h); row-gap: 14px; }
+.grid.dash.uniform.h-s { --dash-h: 380px; }
+.grid.dash.uniform.h-m { --dash-h: 480px; }
+.grid.dash.uniform.h-l { --dash-h: 620px; }
+.grid.dash.uniform > .dash-card { margin-bottom: 0; height: 100%; min-height: 0; overflow: hidden; }
+.grid.dash.uniform .dash-body { flex: 1; min-height: 0; }
+.grid.dash.uniform .card-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin-right: -8px; padding-right: 8px; scrollbar-width: thin; scrollbar-color: var(--btn-line) transparent; }
+.grid.dash.uniform.editing .dash-body { max-height: none; }
+.dash-help { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.dash-help label { display: inline-flex; align-items: center; gap: 8px; color: var(--text); }
+.grid.dash.uniform .card-scroll { padding-bottom: 14px; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); }
