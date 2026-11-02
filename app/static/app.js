@@ -641,11 +641,11 @@ function drawIntegration() {
   ].join("");
 
   const devicesHtml = !hasSource
-    ? emptyStart("기기 제어", "기기를 가져올 수 있는 허브(Hubitat Maker API, Home Assistant, SwitchBot 등)를 연결하면 방별 기기 목록과 켜기/끄기가 여기에 나타납니다.", META.filter((m) => m.devices))
+    ? emptyStart("기기 제어", "기기를 가져올 수 있는 허브(Hubitat Maker API, Home Assistant, Homey Pro, SwitchBot 등)를 연결하면 방별 기기 목록과 켜기/끄기가 여기에 나타납니다.", META.filter((m) => m.devices))
     : `<div class="split">
       <section class="section grow"><div class="section-head"><h2>기기 제어</h2>
         ${d.devices.length ? `<div class="filters" role="group" aria-label="방 필터">${rooms.map((r) => `<button type="button" data-room="${esc(r)}" aria-pressed="${r === roomFilter}">${esc(r)}</button>`).join("")}</div>` : ""}</div>
-        ${d.devices.length ? `<div class="legend"><span><span class="src HE">HE</span>Hubitat</span><span><span class="src HA">HA</span>Home Assistant</span>${d.devices.some((x) => x.source === "SB") ? '<span><span class="src SB">SB</span>SwitchBot</span>' : ""}<span><span class="src HB">HB</span>Homebridge → HomeKit 노출</span></div>` : ""}
+        ${d.devices.length ? `<div class="legend"><span><span class="src HE">HE</span>Hubitat</span><span><span class="src HA">HA</span>Home Assistant</span>${d.devices.some((x) => x.source === "SB") ? '<span><span class="src SB">SB</span>SwitchBot</span>' : ""}${d.devices.some((x) => x.source === "HY") ? '<span><span class="src HY">HY</span>Homey</span>' : ""}<span><span class="src HB">HB</span>Homebridge → HomeKit 노출</span></div>` : ""}
         <div class="list">${shown.map(deviceRow).join("") || '<div class="empty" style="border:none">가져온 기기가 없습니다. Maker API에서 관리할 기기를 골랐는지 확인하세요.</div>'}</div>
         ${d.devices.length ? `<span class="muted" style="font-size:12px">표시 ${shown.length}개 · 전체 ${d.devices.length}개</span>` : ""}
       </section>

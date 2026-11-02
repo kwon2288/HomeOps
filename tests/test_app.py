@@ -59,7 +59,7 @@ def test_rejects_bad_ip(client):
 
 def test_integrations_listed(client):
     types = {m["type"]: m for m in client.get("/api/integrations").json()}
-    for t in ("hubitat", "home_assistant", "homebridge", "synology", "proxmox", "portainer", "unifi", "vmware", "web", "switchbot"):
+    for t in ("hubitat", "home_assistant", "homebridge", "synology", "proxmox", "portainer", "unifi", "vmware", "web", "switchbot", "homey"):
         assert t in types
     assert types["unifi"]["category"] == "infra" and types["hubitat"]["devices"] is True
     assert any(f["secret"] for f in types["unifi"]["fields"])

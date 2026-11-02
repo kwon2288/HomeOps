@@ -157,6 +157,7 @@ rm -rf /var/lib/homeops
 | Portainer | 주소, Access Token | My account → Access tokens |
 | UniFi Network | 콘솔 주소, API 키 | UniFi 콘솔(UDR 등)의 Network 앱 → Settings → Integrations(버전에 따라 Control Plane → Integrations). 주소는 `https://192.168.0.1`처럼 콘솔 주소 그대로 |
 | VMware vCenter | 주소, vCenter 계정 | vCenter 7.0 U2 이상. VM 전원 제어에는 가상 머신 → 상호 작용 → 전원 권한 필요. 게스트 종료·재시작은 VMware Tools 필요. ESXi 단독 호스트는 아직 미지원 |
+| Homey Pro | 집 안 주소, API 키 | Homey 웹 앱(my.homey.app) → 설정 → **API Keys** → 새 키 (기기 읽기 · 제어, 플로우를 쓰면 플로우 권한). Homey Pro (2023) 이상. Homey에 잡힌 LG ThinQ 등 다른 앱의 기기도 같이 들어오므로, Hubitat과 겹치지 않게 **가져올 앱**에 `lg`처럼 앱 이름 일부를 넣으면 그 앱 기기만 가져옴 |
 | SwitchBot | 토큰, 시크릿 | SwitchBot 앱 → 프로필 → 환경설정 → 정보 → **앱 버전 10번 누르기** → 개발자 옵션 → Get Token. 블루투스 기기(Bot · 커튼 · 도어락)는 허브(Hub 2 등)에 연결되고 앱에서 클라우드 서비스가 켜져 있어야 보임. 클라우드 API라 인터넷이 필요하고 하루 호출 한도 10,000회 — 상태는 설정한 간격(기본 5분)만큼 기억해 두고 씀 |
 | 웹 상태 확인 | 웹 주소 | 전용 연동이 없는 장비·서비스. 응답 여부와 응답 시간, 웹 화면 바로가기 (로그인 화면 401·403도 "응답"으로 봄) |
 
@@ -273,6 +274,14 @@ class MyThing(Integration):
 위험한 작업(재부팅·종료·중지·재시작)은 본문에 `{"confirm": true}`가 있어야 실행됩니다.
 
 ## 변경 이력
+
+### v0.10.0 — 2026-11-02
+- **Homey Pro 연동 추가** (로컬 Web API, API 키 — 클라우드를 거치지 않고 호출 한도 없음)
+  - Homey에 잡힌 기기를 모두 가져옴. LG ThinQ 앱으로 연결한 LG 가전도 여기서 보고 켜기 · 끄기
+  - **가져올 앱** 설정(예: `lg`)으로 특정 앱의 기기만 가져와 Hubitat 기기와 겹치지 않게 할 수 있음
+  - 기기 상태(켜짐 · 꺼짐, 잠김, 문 열림, 온습도 · 전력, 커튼, 응답 없음 사유), 배터리 부족, Homey 메모리 · 가동 시간
+  - 플로우 · 고급 플로우 실행 (연결 설정에서 켜면 카드에 표시)
+  - 스마트홈 연동 화면의 기기 목록에 `HY`로 표시, 방은 Homey 구역 이름
 
 ### v0.9.4 — 2026-11-02
 - Synology 카드에서 디스크 목록을 기본으로 숨기고 볼륨만 표시. 상태나 SMART가 정상이 아닌 디스크는 "문제 있는 디스크"로 항상 표시. 전체 목록은 연결 설정의 "카드에 디스크 목록도 표시"로 켤 수 있음. 디스크 상태 지표는 그대로
