@@ -312,3 +312,17 @@ details.xrow > .row-act { justify-content: flex-start; padding: 0 0 10px; }
 .grid.dash.uniform.measuring { grid-auto-rows: auto; }
 .grid.dash.uniform.measuring > .dash-card { height: auto; }
 .grid.dash.uniform.measuring .dash-body, .grid.dash.uniform.measuring .card-scroll { flex: none; overflow: visible; }
+
+/* 수동 등록 기기 배치 */
+.man-host { container-type: inline-size; display: flex; flex-direction: column; gap: 12px; }
+.man-grid { align-items: stretch; }
+.man-item { display: flex; flex-direction: column; min-width: 0; }
+.man-item > .card { flex: 1; }
+.man-item.wide2 { grid-column: span 2; }
+@container (max-width: 600px) { .man-item.wide2 { grid-column: auto; } }
+.man-grid.editing .man-item { border: 1px dashed var(--btn-line); border-radius: 14px; padding: 10px; cursor: grab; }
+.man-grid.editing .man-item > .card { pointer-events: none; opacity: .55; }
+.man-item.is-hidden { opacity: .45; }
+.man-item.dragging { opacity: .3; }
+.man-item.drop-before { box-shadow: -4px 0 0 var(--accent); }
+.man-item.drop-after { box-shadow: 4px 0 0 var(--accent); }

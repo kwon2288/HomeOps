@@ -166,7 +166,7 @@ rm -rf /var/lib/homeops
 - 기기 목록·제어·모드·HSM은 공식 **Maker API**를 씁니다.
 - 메모리·온도·DB 크기·펌웨어·재부팅·백업은 허브 관리 화면이 쓰는 **비공식 URL**(`/hub/advanced/*`, `/hub2/hubData`, `/hub/reboot`, `/hub/backupDB`)이라 펌웨어 업데이트 후 동작이 달라질 수 있습니다. 값이 안 나오면 "—"로 표시되고 나머지 기능은 그대로 동작합니다.
 - 허브에 로그인 보안을 켰다면 허브 카드에 허브 로그인 계정도 입력하세요.
-- 허브 백업 파일은 데이터 폴더의 `backups/`에 허브별로 10개까지 보관되고, 허브 화면에서 내려받을 수 있습니다.
+- 허브 백업 파일은 데이터 폴더의 `backups/`에 허브별로 10개까지 보관되고, 허브 화면에서 내려받거나 삭제할 수 있습니다.
 
 ## 고급: 환경 변수 (모두 선택)
 
@@ -268,12 +268,17 @@ class MyThing(Integration):
 | `GET /api/backup/remote/{ftp\|webdav}` · `POST /api/backup/test/{ftp\|webdav}` | 원격 목록 · 연결 테스트 |
 | `POST /api/backup/restore` · `POST /api/backup/restore-upload` | 목록에서 복구 · 파일 올려서 복구 |
 | `GET /api/status/{id}` | 연결 하나의 상태 (화면은 카드마다 따로 불러옴) |
-| `GET` · `PUT /api/layout/{infra\|hubs}` | 대시보드 배치 (순서 · 크기 · 목록 줄 수 · 숨김) |
+| `GET` · `PUT /api/layout/{infra\|hubs\|manual}` | 대시보드 배치 (순서 · 크기 · 목록 줄 수 · 숨김) |
+| `DELETE /api/hub-backups/{파일}` | Hubitat 백업 파일 삭제 |
 | `GET /api/update` · `POST /api/update/apply` | 새 버전 확인(`?refresh=1`로 바로 확인) · 업데이트 시작 |
 
 위험한 작업(재부팅·종료·중지·재시작)은 본문에 `{"confirm": true}`가 있어야 실행됩니다.
 
 ## 변경 이력
+
+### v0.10.1 — 2026-11-02
+- **수동 등록 기기 배치 편집**: 스마트홈 허브 화면의 수동 등록 기기에 "배치 편집" — 끌어서(또는 ◀ ▶) 순서 바꾸기, 1칸 · 2칸, 숨기기. 허브 카드 배치와 따로 서버에 저장
+- **Hubitat 백업 파일 삭제**: 백업 파일 목록에 삭제 버튼 (확인 후 삭제, 작업 기록에 남김)
 
 ### v0.10.0 — 2026-11-02
 - **Homey Pro 연동 추가** (로컬 Web API, API 키 — 클라우드를 거치지 않고 호출 한도 없음)

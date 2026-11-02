@@ -201,7 +201,7 @@ async def status_one(conn_id: str, request: Request) -> dict:
 
 # ---- 대시보드 배치 (화면별 카드 순서 · 크기 · 표시 줄 수 · 숨김) ----
 
-LAYOUT_PAGES = ("infra", "hubs")
+LAYOUT_PAGES = ("infra", "hubs", "manual")   # manual = 스마트홈 허브 화면의 수동 등록 기기
 
 
 class CardLayout(BaseModel):
@@ -276,11 +276,22 @@ def hub_backups(request: Request) -> list[dict]:
     return [{"file": p.name, "size": p.stat().st_size, "mtime": int(p.stat().st_mtime)} for p in files]
 
 
-@router.get("/hub-backups/{name}")
-def hub_backup_download(name: str, request: Request) -> FileResponse:
+def _hub_backup_path(request: Request, name: str):
     if not re.match(r"^[\w\-]+\.lzf$", name):
         raise HTTPException(400, "잘못된 파일 이름")
     path = ctx(request).runtime.backup_dir / name
-    if not path.exists():
+    if not path.is_file():
         raise HTTPException(404, "파일이 없습니다")
-    return FileResponse(path, filename=name, media_type="application/octet-stream")
+    return path
+
+
+@router.get("/hub-backups/{name}")
+def hub_backup_download(name: str, request: Request) -> FileResponse:
+    return FileResponse(_hub_backup_path(request, name), filename=name, media_type="application/octet-stream")
+
+
+@router.delete("/hub-backups/{name}")
+def hub_backup_delete(name: str, request: Request) -> dict:
+    _hub_backup_path(request, name).unlink()
+    ctx(request).db.audit("Hubitat 백업 파일 삭제", name, "성공")
+    return {"ok": True}

@@ -532,9 +532,12 @@ const PLATFORM_OPTIONS = ["HomeKit", "Google Home", "SmartThings", "Aqara", "Hom
 let pingCache = {};
 
 async function renderHubs() {
-  const [, devices, platforms, backups] = await Promise.all([
+  const [, devices, platforms, backups, manLayout] = await Promise.all([
     dashSetup("hubs", "smarthome"), api("/api/registry/devices"), api("/api/registry/platforms"), api("/api/hub-backups"),
+    api("/api/layout/manual"),
   ]);
+  view._devices = devices;
+  Object.assign(MAN, { layout: manLayout, draft: null, editing: false, dragId: null });
   const types = META.filter((m) => m.category === "smarthome");
   const list = DASH.conns;
   view.innerHTML = `
@@ -543,12 +546,13 @@ async function renderHubs() {
       <div id="dash-host" class="dash-host">${dashGridHtml()}</div>
       ${backups.length ? `<details class="card"><summary style="cursor:pointer;font-size:14px">Hubitat 백업 파일 ${backups.length}개</summary>
         <div class="rows">${backups.map((b) => `<div class="row"><div class="row-main"><b class="mono">${esc(b.file)}</b><small>${(b.size / 1048576).toFixed(1)} MB · ${new Date(b.mtime * 1000).toLocaleString("ko-KR")}</small></div>
-        <a class="btn sm" style="display:inline-flex;align-items:center;text-decoration:none" href="/api/hub-backups/${encodeURIComponent(b.file)}" download>받기</a></div>`).join("")}</div></details>` : ""}
+        <div class="row-act"><a class="btn sm" style="display:inline-flex;align-items:center;text-decoration:none" href="/api/hub-backups/${encodeURIComponent(b.file)}" download>받기</a>
+        <button type="button" class="btn sm danger" data-hubbk-del="${esc(b.file)}">삭제</button></div></div>`).join("")}</div></details>` : ""}
     </section>`
     : `<section class="section">${emptyStart("허브 연결하기", "쓰는 허브만 골라 연결하세요.", types)}</section>`}
     <section class="section"><div class="section-head"><div><h2>수동 등록 기기</h2><p>API 연동은 없지만 IP를 넣으면 응답 여부(ping)를 확인합니다</p></div>
-      <div class="chips">${devices.some((d) => d.ip) ? '<button class="btn" data-act="ping-all">전체 응답 확인</button>' : ""}<button class="btn accent" data-act="dev-add">+ 기기 등록</button></div></div>
-      <div class="grid mid">${devices.map(manualCard).join("") || '<div class="empty">Apple TV, HomePod, Nest Hub, Aqara 허브처럼 API로 연결하지 않는 기기를 역할과 함께 적어 둘 수 있어요. "+ 기기 등록"을 누르세요.</div>'}</div>
+      <div id="man-buttons">${manButtons()}</div></div>
+      <div id="man-host" class="man-host">${manGridHtml()}</div>
     </section>
     <section class="section"><div class="section-head"><div><h2>플랫폼 역할</h2><p>플랫폼마다 무엇을 맡기는지</p></div>
       <button class="btn" data-act="pf-add">+ 플랫폼 추가</button></div>
@@ -561,6 +565,131 @@ async function renderHubs() {
   view._platforms = platforms;
   if (list.length) dashLoad();
 }
+
+/* 수동 등록 기기 배치 (순서 · 1칸/2칸 · 숨김) — 허브 대시보드와 같은 방식, 따로 저장 */
+const MAN = { layout: { order: [], cards: {} }, draft: null, editing: false, dragId: null };
+const manLayoutNow = () => (MAN.editing ? MAN.draft : MAN.layout);
+function manOpts(id) { return { size: "m", hidden: false, ...(manLayoutNow().cards[id] || {}) }; }
+function manOrdered() {
+  const pos = new Map(manLayoutNow().order.map((id, i) => [id, i]));
+  return (view._devices || []).map((d, i) => [d, pos.has(String(d.id)) ? pos.get(String(d.id)) : 1000 + i]).sort((a, b) => a[1] - b[1]).map((x) => x[0]);
+}
+function manButtons() {
+  const devices = view._devices || [];
+  if (MAN.editing) {
+    return `<div class="chips"><button type="button" class="btn" data-manmode="reset">기본 배치로</button>
+      <button type="button" class="btn" data-manmode="cancel">취소</button><button type="button" class="btn primary" data-manmode="save">완료</button></div>`;
+  }
+  return `<div class="chips">${devices.some((d) => d.ip) ? '<button class="btn" data-act="ping-all">전체 응답 확인</button>' : ""}
+    ${devices.length > 1 ? '<button type="button" class="btn" data-manmode="edit">배치 편집</button>' : ""}<button class="btn accent" data-act="dev-add">+ 기기 등록</button></div>`;
+}
+function manGridHtml() {
+  const devices = view._devices || [];
+  if (!devices.length) return '<div class="empty">Apple TV, HomePod, Nest Hub, Aqara 허브처럼 API로 연결하지 않는 기기를 역할과 함께 적어 둘 수 있어요. "+ 기기 등록"을 누르세요.</div>';
+  const hidden = devices.filter((d) => manOpts(String(d.id)).hidden).length;
+  const cards = manOrdered().map((d) => {
+    const id = String(d.id), o = manOpts(id);
+    if (o.hidden && !MAN.editing) return "";
+    const tools = MAN.editing ? `<div class="dash-tools">
+        <span class="grip" title="끌어서 옮기기" aria-hidden="true">⠿</span>
+        <button type="button" class="btn sm" data-man="left" aria-label="${esc(d.name)} 앞으로">◀</button>
+        <button type="button" class="btn sm" data-man="right" aria-label="${esc(d.name)} 뒤로">▶</button>
+        <button type="button" class="btn sm" data-man="size">${o.size === "l" ? "1칸으로" : "2칸으로"}</button>
+        <button type="button" class="btn sm" data-man="hide">${o.hidden ? "보이기" : "숨기기"}</button></div>` : "";
+    return `<div class="man-item${o.size === "l" ? " wide2" : ""}${o.hidden ? " is-hidden" : ""}" data-mid="${esc(id)}"${MAN.editing ? ' draggable="true"' : ""}>${tools}${manualCard(d)}</div>`;
+  }).join("");
+  return `${MAN.editing ? '<p class="dash-help">카드를 끌어서 옮기거나 ◀ ▶로 순서를 바꾸고, 2칸으로 넓히거나 숨길 수 있어요.</p>' : ""}
+    <div class="grid mid man-grid${MAN.editing ? " editing" : ""}" id="man-grid">${cards}</div>
+    ${!MAN.editing && hidden ? `<p class="muted small-line">숨긴 기기 ${hidden}개 · <button type="button" class="linklike" data-manmode="edit">배치 편집에서 보이기</button></p>` : ""}`;
+}
+function manPaint() {
+  const host = $("#man-host"), btns = $("#man-buttons");
+  if (host) host.innerHTML = manGridHtml();
+  if (btns) btns.innerHTML = manButtons();
+}
+function manSet(id, patch) { MAN.draft.cards[id] = { ...manOpts(id), ...patch }; manPaint(); }
+function manMove(id, delta) {
+  const order = manOrdered().map((d) => String(d.id));
+  const i = order.indexOf(id), j = i + delta;
+  if (i < 0 || j < 0 || j >= order.length) return;
+  [order[i], order[j]] = [order[j], order[i]];
+  MAN.draft.order = order;
+  manPaint();
+  const b = document.querySelector(`#man-grid [data-mid="${CSS.escape(id)}"] [data-man="${delta < 0 ? "left" : "right"}"]`);
+  if (b) b.focus();
+}
+
+view.addEventListener("click", async (e) => {
+  const del = e.target.closest("[data-hubbk-del]");
+  if (del) {
+    const name = del.dataset.hubbkDel;
+    if (!(await confirmBox("백업 파일 삭제", `${name} 파일을 지웁니다. 되돌릴 수 없습니다.`, "삭제"))) return;
+    try { await api(`/api/hub-backups/${encodeURIComponent(name)}`, { method: "DELETE" }); toast("삭제했습니다"); route(); }
+    catch (err) { toast(err.message, true); }
+    return;
+  }
+  const mode = e.target.closest("[data-manmode]");
+  if (mode) {
+    const m = mode.dataset.manmode;
+    if (m === "edit") {
+      MAN.draft = JSON.parse(JSON.stringify(MAN.layout));
+      MAN.draft.order = manOrdered().map((d) => String(d.id));
+      MAN.editing = true;
+    } else if (m === "cancel") {
+      MAN.editing = false;
+    } else if (m === "reset") {
+      MAN.draft = { order: [], cards: {} };
+    } else if (m === "save") {
+      try {
+        MAN.layout = await api("/api/layout/manual", { method: "PUT", body: MAN.draft });
+        MAN.editing = false;
+        toast("배치를 저장했습니다");
+      } catch (err) { toast(err.message, true); return; }
+    }
+    manPaint();
+    return;
+  }
+  const t = e.target.closest("[data-man]");
+  if (!t) return;
+  const id = t.closest("[data-mid]").dataset.mid;
+  const o = manOpts(id);
+  if (t.dataset.man === "left") manMove(id, -1);
+  else if (t.dataset.man === "right") manMove(id, 1);
+  else if (t.dataset.man === "size") manSet(id, { size: o.size === "l" ? "m" : "l" });
+  else if (t.dataset.man === "hide") manSet(id, { hidden: !o.hidden });
+});
+view.addEventListener("dragstart", (e) => {
+  const item = e.target.closest && e.target.closest("#man-grid.editing [data-mid]");
+  if (!item) return;
+  MAN.dragId = item.dataset.mid;
+  item.classList.add("dragging");
+  e.dataTransfer.effectAllowed = "move";
+  e.dataTransfer.setData("text/plain", MAN.dragId);
+});
+view.addEventListener("dragover", (e) => {
+  if (!MAN.dragId || !e.target.closest("#man-grid")) return;
+  e.preventDefault();
+  document.querySelectorAll("#man-grid .drop-before, #man-grid .drop-after").forEach((x) => x.classList.remove("drop-before", "drop-after"));
+  const over = e.target.closest("[data-mid]");
+  if (over && over.dataset.mid !== MAN.dragId) {
+    const r = over.getBoundingClientRect();
+    over.classList.add(e.clientX < r.left + r.width / 2 ? "drop-before" : "drop-after");
+  }
+});
+view.addEventListener("drop", (e) => {
+  if (!MAN.dragId) return;
+  e.preventDefault();
+  const over = e.target.closest("[data-mid]");
+  if (over && over.dataset.mid !== MAN.dragId) {
+    const order = manOrdered().map((d) => String(d.id)).filter((x) => x !== MAN.dragId);
+    const r = over.getBoundingClientRect();
+    order.splice(order.indexOf(over.dataset.mid) + (e.clientX < r.left + r.width / 2 ? 0 : 1), 0, MAN.dragId);
+    MAN.draft.order = order;
+  }
+  MAN.dragId = null;
+  manPaint();
+});
+view.addEventListener("dragend", () => { if (MAN.dragId) { MAN.dragId = null; manPaint(); } });
 
 function manualCard(d) {
   const p = pingCache[d.id];

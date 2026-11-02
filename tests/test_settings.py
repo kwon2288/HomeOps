@@ -190,3 +190,21 @@ def test_dashboard_layout(client):
     assert client.put("/api/layout/infra", json={"height": "huge"}).status_code == 422
     assert client.put("/api/layout/nope", json={}).status_code == 404
     assert client.get("/api/status/nope").status_code == 404
+
+
+def test_hub_backup_delete_and_manual_layout(client):
+    d = client.app.state.ctx.runtime.backup_dir
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "main-20261102-010101.lzf").write_bytes(b"x")
+    (d / "keep.txt").write_bytes(b"x")
+    assert [x["file"] for x in client.get("/api/hub-backups").json()] == ["main-20261102-010101.lzf"]
+    assert client.delete("/api/hub-backups/main-20261102-010101.lzf").status_code == 200
+    assert client.get("/api/hub-backups").json() == []
+    assert client.delete("/api/hub-backups/main-20261102-010101.lzf").status_code == 404
+    assert client.delete("/api/hub-backups/keep.txt").status_code == 400          # .lzf 만
+    assert client.delete("/api/hub-backups/..%2Fhomeops.db").status_code in (400, 404, 405)
+    assert (d / "keep.txt").exists() and client.app.state.ctx.runtime.db_path.exists()
+    assert client.get("/api/audit").json()[0]["action"] == "Hubitat 백업 파일 삭제"
+
+    saved = client.put("/api/layout/manual", json={"order": ["3", "1"], "cards": {"1": {"hidden": True, "size": "l"}}}).json()
+    assert saved["order"] == ["3", "1"] and saved["cards"]["1"]["hidden"]
