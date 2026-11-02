@@ -252,7 +252,9 @@ function statusCardInner(st, opts = { rows: -1 }, loading = false) {
 const statusCache = {};
 const DASH = { page: null, category: null, conns: [], layout: null, draft: null, editing: false, loading: new Set(), seq: 0, dragId: null };
 const ROW_CHOICES = [[0, "요약만"], [3, "3줄"], [5, "5줄"], [10, "10줄"], [-1, "전부"]];
-const HEIGHT_CHOICES = [["s", "같은 크기 · 작게"], ["m", "같은 크기 · 보통"], ["l", "같은 크기 · 크게"], ["auto", "내용에 맞춤"]];
+// 같은 크기: 모든 카드를 "가장 긴 카드의 내용 높이"로 맞추고, 고른 크기는 최대 높이로만 쓴다 (넘치면 카드 안에서 스크롤)
+const HEIGHT_CHOICES = [["s", "같은 크기 · 최대 작게"], ["m", "같은 크기 · 최대 보통"], ["l", "같은 크기 · 최대 크게"], ["auto", "내용에 맞춤 (카드마다 다름)"]];
+const HEIGHT_CAP = { s: 380, m: 480, l: 620 };
 const dashHeight = () => dashLayout().height || "m";
 
 const dashLayout = () => (DASH.editing ? DASH.draft : DASH.layout);
@@ -315,8 +317,29 @@ function fitCard(el) {
   if (el.parentElement && el.parentElement.classList.contains("uniform")) { el.style.gridRowEnd = ""; return; }
   el.style.gridRowEnd = `span ${Math.ceil((el.getBoundingClientRect().height + 14) / 2)}`;
 }
+function fitUniform(grid) {
+  const cards = [...grid.querySelectorAll(":scope > .dash-card")];
+  if (!cards.length) return;
+  grid.classList.add("measuring");          // 잠깐 높이 제한을 풀고 내용 높이를 잰다 (그리기 전이라 깜빡이지 않음)
+  const natural = Math.max(...cards.map((c) => c.getBoundingClientRect().height));
+  grid.classList.remove("measuring");
+  const h = `${Math.ceil(Math.min(HEIGHT_CAP[dashHeight()] || 480, natural))}px`;
+  if (grid.style.getPropertyValue("--dash-h") !== h) grid.style.setProperty("--dash-h", h);
+}
+// 창 폭이 바뀌면 줄바꿈이 달라져 내용 높이도 달라지므로 다시 잰다
+const dashGridObs = "ResizeObserver" in window ? new ResizeObserver((entries) => entries.forEach((en) => {
+  if (en.target.isConnected && en.target.classList.contains("uniform")) fitUniform(en.target);
+})) : null;
 function dashFit() {
-  document.querySelectorAll("#dash-grid > .dash-card").forEach((el) => { fitCard(el); if (dashFitObs) dashFitObs.observe(el); });
+  const grid = $("#dash-grid");
+  if (!grid) return;
+  if (grid.classList.contains("uniform")) {
+    grid.querySelectorAll(":scope > .dash-card").forEach((el) => { el.style.gridRowEnd = ""; });
+    fitUniform(grid);
+    if (dashGridObs) dashGridObs.observe(grid);
+    return;
+  }
+  grid.querySelectorAll(":scope > .dash-card").forEach((el) => { fitCard(el); if (dashFitObs) dashFitObs.observe(el); });
 }
 
 function dashPaintAll() {

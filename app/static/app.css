@@ -308,3 +308,6 @@ details.xrow > .row-act { justify-content: flex-start; padding: 0 0 10px; }
 .dash-help { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .dash-help label { display: inline-flex; align-items: center; gap: 8px; color: var(--text); }
 .grid.dash.uniform .card-scroll { padding-bottom: 14px; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); }
+.grid.dash.uniform.measuring { grid-auto-rows: auto; }
+.grid.dash.uniform.measuring > .dash-card { height: auto; }
+.grid.dash.uniform.measuring .dash-body, .grid.dash.uniform.measuring .card-scroll { flex: none; overflow: visible; }
