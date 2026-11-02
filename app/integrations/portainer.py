@@ -17,6 +17,7 @@ class PortainerIntegration(Integration):
     fields = [
         url_field("https://192.168.0.x:9443"),
         field("api_key", "Access Token", secret=True, required=True, full=True),
+        field("show_stacks", "카드에 스택 목록도 표시", kind="bool", default=False),
         verify_field(default=False),
     ]
 
@@ -52,7 +53,7 @@ class PortainerIntegration(Integration):
             metrics=[metric("실행 중", p["running"]), metric("중지됨", p["stopped"]),
                      metric("스택", len(p["stacks"])), metric("전체 컨테이너", len(p["containers"]))],
             sections=[section("컨테이너 (문제 · 실행 중 · 중지 순)", rows, empty="컨테이너가 없습니다")]
-            + ([section("스택", stacks)] if stacks else []),
+            + ([section("스택", stacks)] if stacks and self.cfg.get("show_stacks") else []),
         )
 
     async def action(self, action: str, params: dict):

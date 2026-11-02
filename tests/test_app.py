@@ -357,8 +357,10 @@ def test_portainer_order_problems_running_then_stopped(runtime):
     respx.get(f"{api}/endpoints/2/docker/containers/json").mock(return_value=httpx.Response(200, json=cts))
     respx.get(f"{api}/stacks").mock(return_value=httpx.Response(200, json=[
         {"Id": 1, "Name": "old", "EndpointId": 2, "Status": 2}, {"Id": 2, "Name": "npm", "EndpointId": 2, "Status": 1}]))
-    c = make_client(Settings(connections=[conn("portainer", "ptn", url="https://ptn.test", api_key="k")]), runtime)
-    secs = c.get("/api/status/ptn").json()["card"]["sections"]
+    c = make_client(Settings(connections=[conn("portainer", "ptn", url="https://ptn.test", api_key="k"),
+                                          conn("portainer", "ptn2", url="https://ptn.test", api_key="k", show_stacks=True)]), runtime)
+    assert [x["title"] for x in c.get("/api/status/ptn").json()["card"]["sections"]] == ["컨테이너 (문제 · 실행 중 · 중지 순)"]  # 스택은 기본으로 숨김
+    secs = c.get("/api/status/ptn2").json()["card"]["sections"]
     rows = secs[0]["rows"]
     assert [r["name"] for r in rows] == ["loop", "zigbee", "Alpha", "bitwarden", "cloudflared"]
     assert [r["badge"] for r in rows] == ["재시작 반복", "unhealthy", None, None, "중지"]
